@@ -120,6 +120,25 @@ class SDBG {
     return rs_w_.select(a, count_a);
   }
 
+  // Batched Forward: out[i] = Forward(edge_ids[i]). The scattered `rs_last_.select` (the cache miss)
+  // is resolved in a single radix-sorted batch (experiments h3/h10: ~2-3x on the select); the per-edge
+  // `rs_w_.rank` stays inline (its occ index is cache-resident). `args`/`scratch` are optional reusable
+  // buffers to avoid per-call allocation in hot loops. Foundation for the batched `assemble` traversal (#4).
+  void ForwardBatch(const uint64_t *edge_ids, int64_t *out, size_t n,
+                    std::vector<int64_t> *args = nullptr,
+                    std::vector<kmlib::RankAndSelect<1, 2>::BatchPair> *scratch = nullptr) const {
+    std::vector<int64_t> local;
+    std::vector<int64_t> &arg = args ? *args : local;
+    arg.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+      uint8_t a = GetW(edge_ids[i]);
+      if (a > kAlphabetSize) a -= kAlphabetSize;
+      int64_t count_a = rs_w_.rank(a, edge_ids[i]);
+      arg[i] = rank_f_[a] + count_a - 1;
+    }
+    rs_last_.select_batch(1, arg.data(), out, n, scratch);
+  }
+
  private:
   const label_word_t *TipLabelStartPtr(uint64_t edge_id) const {
     return content_.tip_lables.data() +
