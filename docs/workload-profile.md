@@ -224,9 +224,17 @@ batched rank/select is real, correct API on the actual SDBG — proven on real d
   review (all EQUIVALENT, 0 divergences) whose skeptic diffed the path-end bit for *every* edge on three real
   SdBGs (k21/k29/k59), **DIFFS=0** — closing the `e==0` coverage gap. Only the `==kNullID` *filter* is
   batchable; the path-walk (`PrevSimplePathEdge` chains) + rc-extension stay sequential.
-- **Remaining — measure the end-to-end `assemble` delta** (honestly: isolated stage, hyperfine, reps). The
-  filter is a small fraction of the sweep, which is a fraction of `assemble`, so expect a small whole-stage
-  number — the ~1.25× is the *filter* ceiling, not the stage's. Restoring **multithreading** (#2/#3, blocked
-  by the CX1 arm64 bug) remains the macro lever.
+- **Measured — the end-to-end `assemble` delta (first sweep).** hyperfine A/B on the real k21 stage:
+  **36.5 s batched vs 38.3 s scalar = 1.05× faster** (above noise, ranges disjoint), and lower-variance. So the
+  first-sweep filter batching is a real, if modest, whole-stage win — as predicted (the filter is a slice of a
+  38 s stage).
+- **DISPROVEN — batching the *rest* of `assemble` (the other 8 sites).** Wiring the H15 primitives into
+  tip/low-depth/weak-link/bubble + `sdbg_pruning` was bit-identical but **1.41× SLOWER** (54.6 s vs 38.3 s),
+  the entire regression in `sdbg_pruning::Trim` (radix-sorts all 30.7 M edges ~6× for a cheap early-exiting
+  degree-zero filter). **Reverted.** Lesson: batched rank/select pays only on a *large single-pass* scatter
+  (the first sweep over 30.7 M raw edges), not on small/collapsed sweeps or *repeated* full-graph passes. See
+  [`../experiments/h16-simplifier-batch-integration/`](../experiments/h16-simplifier-batch-integration/README.md).
+- **Remaining — the macro lever.** Restoring **multithreading** (#2/#3, blocked by the CX1 arm64 bug) is where
+  the real headroom is; single-core rank/select batching has now been fully explored (first sweep = the win).
 
 Two honest caveats surfaced and are recorded: SDBG-dependent code is pinned to C++17 (vendored parallel_hashmap uses std::result_of, removed in C++20), and Forward's inline rank/GetW cap the batched win at 1.88× (not the select-only 2.88×).

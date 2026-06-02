@@ -44,3 +44,4 @@ Each sample is catalogued in [`samples/`](samples/README.md) with source, charac
 | When | Label | Machine | Build | Sample | Thr | Wall | IPC | Notes |
 |---|---|---|---|---|---:|---:|---:|---|
 | [2026-06-01T22:18](2026-06-01T221830-baseline-single-thread/README.md) | baseline single-thread | M3 Max | Release `-O3`, untuned, gnu++11 | [SRR341725](samples/SRR341725.md) ×500K pairs | 1 | 250.8 s | 2.50 (count) | first baseline; cache pending; `-mcpu` untuned (control) |
+| [2026-06-02T03:47](2026-06-02T034721-first-sweep-batched-assemble/README.md) | first-sweep batched `assemble` | M3 Max | Release `-O3`, untuned, gnu++11 (same as baseline) | [SRR341725](samples/SRR341725.md) ×500K pairs | 1 | 240.1 s | 2.50 (count, unchanged) | **`assemble` 1.05× faster** (hyperfine 36.5 vs 38.3 s), contigs md5-identical. Batching the *rest* of `assemble` was **1.41× slower → reverted** (see [h16](../experiments/h16-simplifier-batch-integration/README.md)) |
