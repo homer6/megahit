@@ -17,16 +17,36 @@ proved — and disproved — the levers:
 So: don't touch the bit-twiddling or the layout. **Change the query *access pattern* from one-at-a-time to
 batched + sorted/prefetched.**
 
-## Where the batchable queries are
+## Where the batchable queries are (Milestone 1 audit — DONE)
 
-`assemble` builds a `UnitigGraph` from the SdBG by **visiting every edge** and computing its in/out edges via
-`SDBG::ComputeIncomings/ComputeOutgoings` → `rank`/`select` (the measured hotspot). That sweep is **independent
-per edge → batchable**. (The *sequential unitig extension* along a path is dependent and not batchable per-walk
-— but the initial classify-every-edge sweep, and the cleaning passes that scan all vertices, are.)
+`assemble` builds a `UnitigGraph` (`unitig_graph.cpp`) with a `#pragma omp parallel for` over **every edge**;
+the dominant per-edge cost is the filter `sdbg_->NextSimplePathEdge(edge_idx) == kNullID`. The independent
+dimension (across edges) is **batchable** — but the per-edge work is a **composite**, which is the catch:
 
-> **Milestone 1 (audit):** confirm the exact rank/select call sites in `src/assembly/unitig_graph.cpp` (build)
-> and the cleaning passes; classify each as *independent sweep* (batchable) vs *dependent walk* (not). This
-> decides how much of the 56% is reachable.
+- `NextSimplePathEdge(e)` = `UniqueNextEdge(e)` [`ComputeOutgoings` → **`Forward`** = scattered `select`]
+  **then** `UniquePrevEdge(next)` [`ComputeIncomings` → **`Backward`**]. Two scattered ops, the 2nd dependent on
+  the 1st's result — plus a short local degree scan each.
+- Edges passing the filter then do a **dependent path-walk** (`PrevSimplePathEdge` loop) + **`EdgeReverseComplement`**
+  (`GetLabel` + `IndexBinarySearch` — *not* a simple `select`, not `ForwardBatch`-able), all under `try_lock`.
+
+**`SDBG::ForwardBatch` (built, 1.88× on the real graph) batches only the `Forward` sub-step.** A *correct*
+batched filter therefore needs batched **composites** — `UniqueNextEdgeBatch` / `UniquePrevEdgeBatch` =
+`ForwardBatch`/`BackwardBatch` **+** the local degree scan replicated — not `ForwardBatch` alone.
+
+## Design (revised after the audit)
+
+1. **Batched composite primitives on `SDBG`** (next): `ForwardBatch` ✅ done; add `BackwardBatch`,
+   `UniqueNextEdgeBatch`, `UniquePrevEdgeBatch` (each = batched core op + the inline local scan from
+   `ComputeOutgoings/Incomings`). **Validate each `== scalar` on the real graph** (h11-style) before use.
+2. **Restructure the first sweep** into windows: per window of edges, `UniqueNextEdgeBatch` → (filter) →
+   `UniquePrevEdgeBatch` on the survivors → classify path-ends; then do the dependent walk + RC + lock for the
+   few survivors. (RC stays per-edge — it's `IndexBinarySearch`, a separate batching problem.)
+3. **Compose with multicore** (#2/#3).
+
+> **Correctness bar:** every step validated **bit-identical via `megahit --test -t 1`** (identical contigs).
+> Silent mis-assembly is the failure mode, so this is done as deliberate, reviewed steps — *not* a one-shot
+> rewrite. ForwardBatch is the proven foundation; the composite primitives + sweep restructure are the careful
+> remaining work.
 
 ## Design
 
