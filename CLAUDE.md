@@ -38,15 +38,12 @@ built against the system libc++ ABI; mixing toolchains breaks linking (see `docs
 
 ## Test
 
-```sh
-make simple_test          # runs the toy-dataset suite defined in CMakeLists.txt
-./megahit --test -t 2     # single toy run from the build dir
-```
-
-`simple_test` exercises many code paths (1-pass mode, no-hw-accel, FASTG conversion, empty/no-contig inputs,
-k=255, mercy kmers). There is **no unit-test framework** — tests are end-to-end runs over `test_data/`.
-`src/kmlib/test_*.cpp` are standalone manual checks, not wired into the build. To reproduce a single scenario,
-copy one of the `COMMAND` lines from the `simple_test` target in `CMakeLists.txt`.
+**The end-to-end `simple_test` suite was removed** with the Python driver — it ran every case through `./megahit`
+(the now-deleted orchestrator). There is currently **no end-to-end harness**; it returns with the Seastar driver.
+The bit-identical baseline (`final.contigs.fa` md5 `bf2c562…` on SRR341725 ×500K) is the correctness target the
+new orchestrator must reproduce. `megahit_core <subcommand>` can still be invoked manually per
+[`docs/legacy-driver-spec.md`](docs/legacy-driver-spec.md). `src/kmlib/test_*.cpp` are standalone manual checks,
+not wired into the build; the integration microbenchmarks live in [`experiments/`](experiments/).
 
 ## Code style
 
@@ -55,20 +52,23 @@ clang-format, Google style (see `.clang-format`); the language standard is now *
 
 ## Architecture
 
-### Two-layer design: Python driver + C++ multi-tool
+### The orchestrator (being rebuilt) + the C++ multi-tool
 
-**`src/megahit`** is a Python 3 orchestrator. It does **no assembly itself** — it parses options, sets up the
-output directory, picks the right `megahit_core` binary for the host CPU (`cpu_dispatch()` calls
-`checkcpu`/`checkpopcnt`), and invokes `megahit_core` subcommands stage by stage. Key mechanisms:
-- **Checkpointing**: the `@check_point` decorator (`Checkpoint` class) records completed stages to a file in the
-  output dir so `--continue -o <out>` can resume an interrupted run. Adding/reordering `@check_point`-decorated
-  functions changes checkpoint numbering and breaks resume compatibility.
-- **Pipeline (see `main()`)**: `build_library` → `build_first_graph` (k_min) → `assemble(k_min)` → then for
-  each subsequent *k* in the k-list: `local_assemble` → `iterate` → `build_graph` → `assemble` → finally
-  `merge_final`. Intermediate per-*k* contigs land in `<out>/intermediate_contigs/`; the result is `final.contigs.fa`.
+**The Python driver `src/megahit` has been removed** (all Python is gone; everything is C++23/Seastar). It was
+the orchestrator — option parsing, output-dir setup, host-CPU binary dispatch, checkpoint/resume, and the
+stage-by-stage `megahit_core` invocation. Its full functional contract (pipeline order, per-stage commands +
+flags, k-list rules, checkpoint semantics, file layout) is preserved as a port spec in
+**[`docs/legacy-driver-spec.md`](docs/legacy-driver-spec.md)**, and is being rebuilt as a **Seastar service**
+(coroutine stages on a `sharded<>` engine — see [`docs/megahit-as-a-service.md`](docs/megahit-as-a-service.md)).
+Until that lands there is **no end-to-end run path**; `megahit_core` subcommands are invoked manually.
 
-**`megahit_core`** (`src/main.cpp`) is a single binary dispatching to subcommands by `argv[1]`. Each subcommand
-has a `main_*.cpp` entry point:
+The pipeline the orchestrator runs (unchanged, now in-process coroutines): `build_library → build_first_graph`
+(k_min) → `assemble(k_min)` → then per subsequent *k*: `local_assemble → iterate → build_graph → assemble` →
+`merge_final`. Intermediate per-*k* contigs land in `<out>/intermediate_contigs/`; result is `final.contigs.fa`.
+
+**`megahit_core`** (`src/main.cpp`) is the assembly multi-tool — a single binary dispatching to subcommands by
+`argv[1]`, each with a `main_*.cpp` entry point. It is *retained* (the Seastar service calls these stages
+in-process rather than via fork/exec):
 - `count` / `read2sdbg` (`src/sorting/`) — build the k_min SdBG from reads (2-pass vs 1-pass `--kmin-1pass`)
 - `seq2sdbg` (`src/sorting/seq_to_sdbg.cpp`) — build the SdBG for the next *k* from prior contigs + iterative edges
 - `assemble` (`src/main_assemble.cpp`) — simplify the SdBG into contigs

@@ -91,32 +91,16 @@ target_link_libraries(megahit_core ${ZLIB_LIBRARIES})
 target_link_libraries(megahit_core_popcnt ${ZLIB_LIBRARIES})
 target_link_libraries(megahit_core_no_hw_accel ${ZLIB_LIBRARIES})
 
-add_custom_target(
-        megahit ALL
-        COMMAND cp ${CMAKE_SOURCE_DIR}/src/megahit .
-)
-
+# The Python driver (src/megahit) and the `simple_test` end-to-end suite that ran through it were REMOVED in
+# the C++23 / Seastar conversion — all orchestration is being rebuilt as a Seastar service. The pipeline/
+# per-stage-command contract the new driver must replicate is preserved in docs/legacy-driver-spec.md; the
+# service architecture in docs/megahit-as-a-service.md. `megahit_core*` remain the assembly multi-tool;
+# `megahit_toolkit` (a C++ symlink) keeps the toolkit subcommands. A new end-to-end test harness lands with
+# the Seastar driver.
 add_custom_target(megahit_toolkit ALL
         COMMAND ${CMAKE_COMMAND} -E create_symlink megahit_core_no_hw_accel megahit_toolkit)
-
-set(TEST_DATA ${CMAKE_SOURCE_DIR}/test_data)
-
-add_custom_target(
-        simple_test
-        COMMAND ./megahit --test -t 2
-        COMMAND MEGAHIT_NUM_MERCY_FACTOR=1.5 ./megahit --test -t 4 --mem-flag 0 --no-hw-accel
-        COMMAND ./megahit --test -t 2 --kmin-1pass --prune-level 3 --prune-depth 0
-        COMMAND rm -rf test-random && python3 ${TEST_DATA}/generate_random_fasta.py > random.fa && ./megahit -r random.fa --k-list 255 --min-count 1 -o test-random
-        COMMAND rm -rf test-fastg && ./megahit --test -t 2 --mem-flag 2 --keep-tmp-files -o test-fastg
-        COMMAND rm -rf test-empty && ./megahit -r ${TEST_DATA}/empty.fa -o test-empty
-        COMMAND rm -rf test-no-contig && ./megahit -r ${TEST_DATA}/r4.fa -o test-no-contig
-        COMMAND ./megahit_toolkit contig2fastg 59 test-fastg/intermediate_contigs/k59.contigs.fa > 59.fastg
-        COMMAND ./megahit_toolkit readstat < test-fastg/intermediate_contigs/k59.contigs.fa
-)
-
-add_dependencies(megahit megahit_core megahit_core_popcnt megahit_core_no_hw_accel megahit_toolkit)
-add_dependencies(simple_test megahit)
+add_dependencies(megahit_toolkit megahit_core_no_hw_accel)
 
 install(TARGETS megahit_core megahit_core_popcnt megahit_core_no_hw_accel DESTINATION bin)
-install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/megahit ${CMAKE_CURRENT_BINARY_DIR}/megahit_toolkit DESTINATION bin)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/megahit_toolkit DESTINATION bin)
 install(DIRECTORY test_data DESTINATION share/${PROJECT_NAME})
