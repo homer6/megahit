@@ -1,3 +1,4 @@
+<!-- This file is the run directory's README.md (renders when the dir is opened). -->
 # Profiling run — <YYYY-MM-DDThh:mm:ss> — <short label>
 
 <1–2 lines: what this run is, why, any deviation from a standard run.>
@@ -8,8 +9,10 @@
 | Git | `<short-sha>` (branch `<branch>`) |
 | Machine | Apple <chip> (<hw.model>) — <P>+<E> cores, <RAM> |
 | OS / compiler | macOS <ver> · AppleClang <ver> |
-| Sample | <accession / file> (<N reads/pairs>, <read len>)<, subsample note> |
+| Sample | <accession> — catalog: [`../samples/<accession>.md`](../samples/<accession>.md) · subsample: <derivation + md5> |
 | Threads | <n> |
+
+> Results are specific to this sample+subsample — only comparable against runs using the same one.
 
 ## Build (the binary these numbers came from)
 

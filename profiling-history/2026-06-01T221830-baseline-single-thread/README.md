@@ -10,8 +10,12 @@ a single-core run is a valid *first* baseline. This is the "before" — untuned 
 | Git | `9574891` (branch `master`) |
 | Machine | Apple **M3 Max** (Mac15,9) — 12 performance + 4 efficiency cores, 64 GB |
 | OS / compiler | macOS 14.6.1 · AppleClang 15.0.0 (clang-1500.3.9.4) |
-| Sample | ENA **SRR341725** (human gut metagenome), subsampled to first **500,000 read pairs** (1,000,000 reads, 90 bp max) |
+| **Sample** | **SRR341725** (human gut metagenome, Qin 2012 T2D) — full characterization: [`../samples/SRR341725.md`](../samples/SRR341725.md) |
+| Subsample | first **500,000 read pairs** per mate (`head -n 2000000`; md5 `8664438c…` / `ad3700bf…`), 90 bp reads |
 | Threads | **1** |
+
+> Results are specific to this sample+subsample. Comparisons are only valid against runs using the same
+> [`SRR341725`](../samples/SRR341725.md) 500K-pair subsample.
 
 ## Build (the binary these numbers came from)
 
@@ -110,4 +114,5 @@ xctrace record --template 'CPU Counters' --launch -- \
 
 ## Artifacts in this directory
 
+- `README.md` — this record.
 - `pipeline-stages.log` — raw stage timestamps from the full-pipeline run.

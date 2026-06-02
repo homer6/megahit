@@ -30,6 +30,10 @@ Run a performance-profiling pass on this fork and capture it as a datetime-stamp
    single-thread is a valid baseline.
 5. **Subsample big inputs** for tractable single-threaded runs:
    `gzcat R1.fq.gz | head -n $((4*NREADS)) | gzip > sub_1.fq.gz` (4 lines per read).
+6. **Sample is a first-class variable.** Runtime/IPC/cache/per-stage balance all depend on the data
+   (organism mix, read length, coverage, GC). **Only compare runs at the same sample + subsample.** Every
+   sample must be catalogued in `profiling-history/samples/<accession>.md` (source, characteristics,
+   md5s, subsample derivation); link it from the run record.
 
 ## Run a pass
 
@@ -58,18 +62,21 @@ xctrace record --template 'CPU Counters' --launch -- build/megahit_core count â€
 
 ## Record the result
 
-Create a **datetime-stamped directory** and write `record.md` from the template:
+Each run is a **datetime-stamped directory** whose record is its **`README.md`** (so it renders when you
+open the dir on GitHub):
 
 ```bash
+# 0. Make sure the sample is catalogued (create profiling-history/samples/<acc>.md if new â€” see that dir's README)
 RUN="profiling-history/$(date +%Y-%m-%dT%H%M%S)-<short-label>"
 mkdir -p "$RUN"
-cp templates/profiling-entry.md "$RUN/record.md"   # then fill it in
+cp templates/profiling-entry.md "$RUN/README.md"   # then fill it in; link the sample catalog doc
 # drop raw artifacts alongside: run.log excerpt, time -l output, *.sample, xctrace export
 ```
 
-Use the template at [`templates/profiling-entry.md`](templates/profiling-entry.md). Then add a row to
+Fill `README.md` from the template at [`templates/profiling-entry.md`](templates/profiling-entry.md);
+**link the sample's catalog doc** (`profiling-history/samples/<accession>.md`). Then add a row to
 [`profiling-history/README.md`](../../../profiling-history/README.md). Convert relative dates to absolute.
-Always note any deviation (subsample size, reduced k-list, thread count, build flags) so runs are comparable.
+Always note any deviation (sample/subsample, reduced k-list, thread count, build flags) so runs are comparable.
 
 ## Reference baseline
 

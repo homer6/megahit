@@ -96,7 +96,9 @@ has a `main_*.cpp` entry point:
 This is a performance fork, so profiling is first-class. **When profiling, benchmarking, or measuring
 runtime/IPC/cache/memory, use the `megahit-profiling` skill** (`.claude/skills/megahit-profiling/`) and
 record the result as a datetime-stamped directory under **`profiling-history/`** (committed history; raw
-data/outputs stay in the gitignored `profiling/`).
+data/outputs stay in the gitignored `profiling/`). Each run dir's record is its **`README.md`**; the data
+**sample is catalogued in `profiling-history/samples/`** — results are only comparable at the same
+sample+subsample *and* build flags.
 
 Key facts the skill encodes (macOS / Apple Silicon):
 - No Linux `perf`. `/usr/bin/time -l` gives wall, peak RSS, and `instructions retired` + `cycles elapsed`
