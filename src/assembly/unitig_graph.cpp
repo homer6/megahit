@@ -4,7 +4,9 @@
 
 #include "unitig_graph.h"
 #include <omp.h>
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "kmlib/kmbitvector.h"
 #include "utils/mutex.h"
@@ -17,12 +19,31 @@ UnitigGraph::UnitigGraph(SDBG *sdbg)
   SpinLock path_lock;
   AtomicBitVector locks(sdbg_->size());
   size_t count_palindrome = 0;
+  // Precompute the path-end filter (IsValidEdge && NextSimplePathEdge == kNullID) for every edge using the
+  // BATCHED NextSimplePathEdge — the scattered rank/select underneath gets sorted + prefetched (experiments
+  // h11-h14). Windowed to bound the batch's scratch memory; read-only on the graph, so the parallel walk loop
+  // below is left unchanged. is_path_end.at(e) is *exactly* the old inline `IsValidEdge && NextSimplePathEdge
+  // == kNullID` test (NextSimplePathEdgeBatch == scalar is validated; invalid edges yield kNullID and stay
+  // unset), so the assembly is bit-identical (gated by experiments/verify-contigs.sh).
+  AtomicBitVector is_path_end(sdbg_->size());
+  {
+    const size_t kWin = size_t(1) << 16;
+    std::vector<uint64_t> ids(kWin), nspe(kWin);
+    for (uint64_t base = 0; base < sdbg_->size(); base += kWin) {
+      size_t m = std::min<uint64_t>(kWin, sdbg_->size() - base);
+      for (size_t j = 0; j < m; ++j) ids[j] = base + j;
+      sdbg_->NextSimplePathEdgeBatch(ids.data(), nspe.data(), m);
+      for (size_t j = 0; j < m; ++j) {
+        uint64_t e = base + j;
+        if (sdbg_->IsValidEdge(e) && nspe[j] == SDBG::kNullID) is_path_end.set(e);
+      }
+    }
+  }
+
 // assemble simple paths
 #pragma omp parallel for reduction(+ : count_palindrome)
   for (uint64_t edge_idx = 0; edge_idx < sdbg_->size(); ++edge_idx) {
-    if (sdbg_->IsValidEdge(edge_idx) &&
-        sdbg_->NextSimplePathEdge(edge_idx) == SDBG::kNullID &&
-        locks.try_lock(edge_idx)) {
+    if (is_path_end.at(edge_idx) && locks.try_lock(edge_idx)) {
       bool will_be_added = true;
       uint64_t cur_edge = edge_idx;
       uint64_t prev_edge;
