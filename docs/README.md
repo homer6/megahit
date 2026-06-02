@@ -16,6 +16,7 @@ Concrete engineering findings/decisions for this fork (not external research):
 | File | What it is |
 |---|---|
 | [`boost-cobalt-macos-build.md`](boost-cobalt-macos-build.md) | How to actually build against **Boost.Cobalt** on macOS/Apple Silicon: Homebrew's Boost 1.90 ships Cobalt headers but **no compiled `libboost_cobalt`**, so we vendor its five `src/*.cpp` at the matching tag and compile in-tree (link `boost_container`). Plus toolchain facts: use `-std=c++2b` (AppleClang rejects `c++23`), `<generator>` is absent in this libc++ (use `cobalt::generator`). |
+| [`workload-profile.md`](workload-profile.md) | **Measured profile** — where the assembler spends time and *why*: `assemble` (~56%) is succinct-dBG **rank/select**-bound (IPC 1.46; arm64 `PDEP` gap in `select-in-word`), `local` (~30%) is compute-bound k-mer hashing (IPC 4.07), `count` (~10%) is scan/copy/sort. Plus the **solution space** (multicore, **batching**, SIMD/NEON broadword, sorted/alt search structures, MLX). Raw runs: [`../profiling-history/`](../profiling-history/README.md). |
 
 ## Provenance
 
