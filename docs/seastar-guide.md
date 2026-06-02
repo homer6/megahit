@@ -27,8 +27,15 @@ Seastar has **no native macOS support** — it targets **Linux or OSv** and depe
    is the honest Seastar-native path, but it changes the project's "macOS/Apple Silicon" premise.
 3. **Linux/arm64** (e.g. Graviton, or an arm64 Linux VM on the Mac) keeps arm64 but on Linux's syscalls.
 
-**This must be decided explicitly** — the bulk of this repo's measured work (IPC/cache/bandwidth on M3 Max, the
-NEON/MLX analyses) assumes a native macOS/Apple-Silicon target that Seastar does not run on.
+**DECIDED (2026-06-02): target Linux.** The project is re-pointed from a macOS/Apple-Silicon batch CLI to a
+**Linux Seastar service**; the Mac becomes a dev box (build/test in a Linux container). The bulk of this repo's
+M3-Max measurements (IPC/cache/bandwidth, the NEON/MLX analyses) were native-macOS-specific and no longer apply
+to the shipping target — they remain valid as *algorithmic* findings (batching is the only assemble lever; the
+CX1 bug root-cause; rank/select is latency-bound) but the absolute numbers must be re-measured on Linux.
+
+Alongside this, MEGAHIT is reframed as **a scalable assembly *service*** (not a one-shot CLI) — which fits
+Seastar far better than the batch framing did. See [`megahit-as-a-service.md`](megahit-as-a-service.md) for the
+service architecture and the two scaling tiers (throughput vs single-assembly-distribution).
 
 ### B. Seastar is a *server* framework; MEGAHIT is a *batch-compute* job over a *shared* graph.
 
