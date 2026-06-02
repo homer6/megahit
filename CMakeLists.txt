@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.5...4.1)
 project(megahit)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
-if (CMAKE_VERSION VERSION_LESS "3.1")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-else ()
-    set(CMAKE_CXX_STANDARD 11)
-endif ()
+# C++23 (this fork's target; AppleClang 15 emits -std=c++2b, clang 16+/Homebrew clang emits -std=c++23).
+# Vendored deps were patched for C++23: parallel_hashmap (std::result_of -> std::invoke_result; <cstdlib> for
+# std::abort) and idba (dropped removed std::unary_function); see those files' [megahit C++23 patch] notes.
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(COVERAGE "Generate coverage report" OFF)
 option(STATIC_BUILD "Build static executation" OFF)
@@ -91,32 +91,41 @@ target_link_libraries(megahit_core ${ZLIB_LIBRARIES})
 target_link_libraries(megahit_core_popcnt ${ZLIB_LIBRARIES})
 target_link_libraries(megahit_core_no_hw_accel ${ZLIB_LIBRARIES})
 
-add_custom_target(
-        megahit ALL
-        COMMAND cp ${CMAKE_SOURCE_DIR}/src/megahit .
-)
-
+# The Python driver (src/megahit) and the `simple_test` end-to-end suite that ran through it were REMOVED in
+# the C++23 / Seastar conversion — all orchestration is being rebuilt as a Seastar service. The pipeline/
+# per-stage-command contract the new driver must replicate is preserved in docs/legacy-driver-spec.md; the
+# service architecture in docs/megahit-as-a-service.md. `megahit_core*` remain the assembly multi-tool;
+# `megahit_toolkit` (a C++ symlink) keeps the toolkit subcommands. A new end-to-end test harness lands with
+# the Seastar driver.
 add_custom_target(megahit_toolkit ALL
         COMMAND ${CMAKE_COMMAND} -E create_symlink megahit_core_no_hw_accel megahit_toolkit)
-
-set(TEST_DATA ${CMAKE_SOURCE_DIR}/test_data)
-
-add_custom_target(
-        simple_test
-        COMMAND ./megahit --test -t 2
-        COMMAND MEGAHIT_NUM_MERCY_FACTOR=1.5 ./megahit --test -t 4 --mem-flag 0 --no-hw-accel
-        COMMAND ./megahit --test -t 2 --kmin-1pass --prune-level 3 --prune-depth 0
-        COMMAND rm -rf test-random && python3 ${TEST_DATA}/generate_random_fasta.py > random.fa && ./megahit -r random.fa --k-list 255 --min-count 1 -o test-random
-        COMMAND rm -rf test-fastg && ./megahit --test -t 2 --mem-flag 2 --keep-tmp-files -o test-fastg
-        COMMAND rm -rf test-empty && ./megahit -r ${TEST_DATA}/empty.fa -o test-empty
-        COMMAND rm -rf test-no-contig && ./megahit -r ${TEST_DATA}/r4.fa -o test-no-contig
-        COMMAND ./megahit_toolkit contig2fastg 59 test-fastg/intermediate_contigs/k59.contigs.fa > 59.fastg
-        COMMAND ./megahit_toolkit readstat < test-fastg/intermediate_contigs/k59.contigs.fa
-)
-
-add_dependencies(megahit megahit_core megahit_core_popcnt megahit_core_no_hw_accel megahit_toolkit)
-add_dependencies(simple_test megahit)
+add_dependencies(megahit_toolkit megahit_core_no_hw_accel)
 
 install(TARGETS megahit_core megahit_core_popcnt megahit_core_no_hw_accel DESTINATION bin)
-install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/megahit ${CMAKE_CURRENT_BINARY_DIR}/megahit_toolkit DESTINATION bin)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/megahit_toolkit DESTINATION bin)
+
+# ---- Seastar assembly service (Phase 0 of the rewrite; LINUX ONLY — Seastar has no macOS reactor, see
+#      docs/seastar-guide.md §0 and docs/megahit-as-a-service.md). OFF by default so the legacy build on any
+#      host is unaffected; enable on a Linux box / container with -DBUILD_SEASTAR_SERVER=ON.
+option(BUILD_SEASTAR_SERVER "Build the Seastar assembly service (Linux only)" OFF)
+if (BUILD_SEASTAR_SERVER)
+    find_package(Seastar REQUIRED)   # provide Seastar's build dir via -DSeastar_DIR=... or pkg-config
+    # The service reuses every megahit_core stage TU EXCEPT src/main.cpp (it supplies its own entry point).
+    # (Transitional: factor these into a shared stage object-library in a later phase to avoid the duplicated
+    # list; kept explicit for now to minimize churn to the legacy targets.)
+    set(MEGAHIT_STAGE_SOURCE
+            src/main_assemble.cpp src/main_buildlib.cpp src/main_iterate.cpp
+            src/main_local_assemble.cpp src/main_sdbg_build.cpp src/utils/options_description.cpp
+            ${ASMBL_SOURCE} ${IDBA_SOURCE} ${SDBG_SOURCE} ${LCASM_SOURCE} ${SEQ_SOURCE}
+            ${CX1_SOURCE} ${TOOLKIT_SOURCE})
+    add_executable(megahit_server
+            src/server/main.cc
+            src/server/cluster.cc
+            src/server/assembly_engine.cc
+            ${MEGAHIT_STAGE_SOURCE})
+    target_include_directories(megahit_server PRIVATE src)
+    target_link_libraries(megahit_server PRIVATE Seastar::seastar ${ZLIB_LIBRARIES})
+    # NOTE: the reused stage code still uses OpenMP internally; it runs OFF the reactor via seastar::async
+    # (assembly_engine.cc). Replacing OpenMP with shard parallelism is a later migration phase.
+endif ()
 install(DIRECTORY test_data DESTINATION share/${PROJECT_NAME})

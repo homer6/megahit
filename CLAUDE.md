@@ -28,39 +28,53 @@ sets, plus the driver:
 Useful CMake options (`-D<OPT>=ON`): `STATIC_BUILD`, `SANITIZER` (ASan/LSan/UBSan), `TSAN` (thread sanitizer),
 `COVERAGE`. Debug builds use `-DCMAKE_BUILD_TYPE=Debug` (adds `_GLIBCXX_DEBUG`).
 
+**C++23 (this fork).** `CMAKE_CXX_STANDARD 23` — AppleClang emits `-std=gnu++2b` (it rejects literal `c++23`),
+which *is* C++23 mode. Getting there required patching the vendored deps for removed/changed features (search
+`[megahit C++23 patch]`): `parallel_hashmap` (`std::result_of`→`std::invoke_result`; `<cstdlib>` for
+`std::abort`), `idba/hash.h` (dropped removed `std::unary_function`), `sorting/kmer_counter.cpp`
+(`std::memory_order::memory_order_*`→namespace-scope constants). Verified bit-identical after the bump.
+**Use AppleClang + system libc++, not Homebrew clang** — Homebrew's Boost libs and `megahit_core` are all
+built against the system libc++ ABI; mixing toolchains breaks linking (see `docs/boost-cobalt-macos-build.md`).
+
 ## Test
 
-```sh
-make simple_test          # runs the toy-dataset suite defined in CMakeLists.txt
-./megahit --test -t 2     # single toy run from the build dir
-```
-
-`simple_test` exercises many code paths (1-pass mode, no-hw-accel, FASTG conversion, empty/no-contig inputs,
-k=255, mercy kmers). There is **no unit-test framework** — tests are end-to-end runs over `test_data/`.
-`src/kmlib/test_*.cpp` are standalone manual checks, not wired into the build. To reproduce a single scenario,
-copy one of the `COMMAND` lines from the `simple_test` target in `CMakeLists.txt`.
+**The end-to-end `simple_test` suite was removed** with the Python driver — it ran every case through `./megahit`
+(the now-deleted orchestrator). There is currently **no end-to-end harness**; it returns with the Seastar driver.
+The bit-identical baseline (`final.contigs.fa` md5 `bf2c562…` on SRR341725 ×500K) is the correctness target the
+new orchestrator must reproduce. `megahit_core <subcommand>` can still be invoked manually per
+[`docs/legacy-driver-spec.md`](docs/legacy-driver-spec.md). `src/kmlib/test_*.cpp` are standalone manual checks,
+not wired into the build; the integration microbenchmarks live in [`experiments/`](experiments/).
 
 ## Code style
 
-clang-format, Google style, C++11 (see `.clang-format`). Format with:
+clang-format, Google style (see `.clang-format`); the language standard is now **C++23** (see Build). Format with:
 `find src -iname '*.cpp' -o -iname '*.h' | xargs clang-format -i --style=file`.
 
 ## Architecture
 
-### Two-layer design: Python driver + C++ multi-tool
+### The orchestrator (being rebuilt) + the C++ multi-tool
 
-**`src/megahit`** is a Python 3 orchestrator. It does **no assembly itself** — it parses options, sets up the
-output directory, picks the right `megahit_core` binary for the host CPU (`cpu_dispatch()` calls
-`checkcpu`/`checkpopcnt`), and invokes `megahit_core` subcommands stage by stage. Key mechanisms:
-- **Checkpointing**: the `@check_point` decorator (`Checkpoint` class) records completed stages to a file in the
-  output dir so `--continue -o <out>` can resume an interrupted run. Adding/reordering `@check_point`-decorated
-  functions changes checkpoint numbering and breaks resume compatibility.
-- **Pipeline (see `main()`)**: `build_library` → `build_first_graph` (k_min) → `assemble(k_min)` → then for
-  each subsequent *k* in the k-list: `local_assemble` → `iterate` → `build_graph` → `assemble` → finally
-  `merge_final`. Intermediate per-*k* contigs land in `<out>/intermediate_contigs/`; the result is `final.contigs.fa`.
+**The Python driver `src/megahit` has been removed** (all Python is gone; everything is C++23/Seastar). It was
+the orchestrator — option parsing, output-dir setup, host-CPU binary dispatch, checkpoint/resume, and the
+stage-by-stage `megahit_core` invocation. Its full functional contract (pipeline order, per-stage commands +
+flags, k-list rules, checkpoint semantics, file layout) is preserved as a port spec in
+**[`docs/legacy-driver-spec.md`](docs/legacy-driver-spec.md)**, and is being rebuilt as a **clustered Seastar
+service** (cluster-first — a set of RPC-connected nodes, jobs routed across them; see
+[`docs/megahit-as-a-service.md`](docs/megahit-as-a-service.md)). The **Phase-0 scaffold is in
+[`src/server/`](src/server/)**: each node runs `seastar::sharded<AssemblyEngine>` and assembles whole samples on
+its shards; the multi-k pipeline runs as `co_await`-ed stages that call the `megahit_core` `main_*` stage entry
+points **in-process** (via `seastar::async`, off-reactor) — these are replaced stage-by-stage with native typed
+code as the migration proceeds. Seastar vendored at `modules/seastar`; build with `-DBUILD_SEASTAR_SERVER=ON` on
+Linux. It is **not yet built/run** (Linux-only; no compiler feedback yet) and there is **no end-to-end run path**
+until it is; `megahit_core` subcommands can be invoked manually meanwhile.
 
-**`megahit_core`** (`src/main.cpp`) is a single binary dispatching to subcommands by `argv[1]`. Each subcommand
-has a `main_*.cpp` entry point:
+The pipeline the orchestrator runs (unchanged, now in-process coroutines): `build_library → build_first_graph`
+(k_min) → `assemble(k_min)` → then per subsequent *k*: `local_assemble → iterate → build_graph → assemble` →
+`merge_final`. Intermediate per-*k* contigs land in `<out>/intermediate_contigs/`; result is `final.contigs.fa`.
+
+**`megahit_core`** (`src/main.cpp`) is the assembly multi-tool — a single binary dispatching to subcommands by
+`argv[1]`, each with a `main_*.cpp` entry point. It is *retained* (the Seastar service calls these stages
+in-process rather than via fork/exec):
 - `count` / `read2sdbg` (`src/sorting/`) — build the k_min SdBG from reads (2-pass vs 1-pass `--kmin-1pass`)
 - `seq2sdbg` (`src/sorting/seq_to_sdbg.cpp`) — build the SdBG for the next *k* from prior contigs + iterative edges
 - `assemble` (`src/main_assemble.cpp`) — simplify the SdBG into contigs
@@ -109,7 +123,10 @@ Key facts the skill encodes (macOS / Apple Silicon):
   dominate results. The committed baseline (`profiling-history/2026-06-01T221830-baseline-single-thread/`) is
   Release `-O3`, *untuned* (no `-mcpu`/`-march`), `gnu++11`.
 - **Single-threaded only for now**: the parallel CX1 sort path has a deterministic data-corruption bug on
-  arm64 (`-t > 1` → `assert edge_writer.h:72` / SIGSEGV). Single-thread is clean.
+  arm64 (`-t > 1` → `assert edge_writer.h:72` / SIGSEGV). **Root-caused**: a TOCTOU race in
+  `sorting/base_engine.cpp` `Lv2Sort` (offset state `acc`/`seen`/`thread_offset[tid]` read outside the lock at
+  ~344-350) + a non-atomic RMW in `sdbg/sdbg_writer.cpp` `SaveSnapshot`. Fix-by-construction (hoist offsets to
+  immutable values, single-owner shards) designed in `docs/coroutine-parallelism-architecture.md`. Single-thread is clean.
 
 ## Performance experiments & the batched rank/select rewrite
 
@@ -145,14 +162,36 @@ required because the upstream CMakeLists never links libomp). Notes:
   dispatch selects `megahit_core_no_hw_accel`.
 - The `src/megahit` Python driver needed a macOS fix (`os.sched_getaffinity` → `_available_cpus()`); it is
   slated for removal in the planned C++23 rewrite.
-- **Known bug:** multithreaded CX1 sort corruption on arm64 (above) — gates parallel runs until fixed.
+- **Known bug:** multithreaded CX1 sort corruption on arm64 (above) — **root-caused**; gates parallel runs
+  until the rewrite lands the fix-by-construction (shared-nothing sharding removes the shared-state bug class;
+  see Modernization below).
 
 ## Modernization direction & docs
 
-Planned: drop the Python driver for a **C++23-only** build, replace **OpenMP with Boost.Cobalt coroutines**
-(single-process orchestration; vendored as the `modules/cobalt` submodule — see
-`docs/boost-cobalt-macos-build.md`), and evaluate SIMD / MLX for hot paths. Research and build notes live in
+The fork now builds at **C++23** (see Build). **Direction (current): convert to a [Seastar](https://github.com/scylladb/seastar)
+application** — shard-per-core, shared-nothing, **C++20-coroutine API** (`co_await`/`seastar::future<T>`, *not*
+the legacy `.then()`). Lay down a new Seastar base, then migrate the pipeline (stages → `co_await`-ed coroutines
+on a `sharded<T>` service; multicore = `invoke_on_all` across shards). Full guide:
+**[`docs/seastar-guide.md`](docs/seastar-guide.md)**. **This supersedes the earlier Boost.Cobalt + `asio::thread_pool`
+plan** (`docs/coroutine-parallelism-architecture.md` — keep its *measured findings* + the CX1 root-cause; the
+substrate is now Seastar shards). The `modules/cobalt` submodule + `src/driver/cobalt_smoke.cpp` are now legacy.
+
+> **Two load-bearing caveats before large-scale migration (see `docs/seastar-guide.md §0`):** (1) **Seastar is
+> Linux-only** — no native macOS/Apple-Silicon support (Docker/Linux container, or re-target Linux); this
+> collides with the fork's platform premise and all the M-series perf measurements. (2) Seastar's **shared-nothing
+> shard-per-core** model fights MEGAHIT's **shared-graph** algorithm — the SdBG must be partitioned so traversals
+> stay shard-local, or cross-shard `submit_to` latency hits the already-latency-bound 56% `assemble` stage.
+> Prototype a sharded SdBG + cross-shard-rate microbench before committing.
+
+**Biggest motivating win = restoring multicore** (~86% of runtime is pinned to one core by the CX1 bug; Seastar's
+shared-nothing model removes that shared-mutable-state bug class by construction). Research notes live in
 [`docs/`](docs/) (start with `docs/README.md`).
+
+**Honest constraints (from measured experiments — see `experiments/`):** the only proven `assemble` lever is the
+**batched memory access pattern** (sort+prefetch scattered rank/select; first-sweep shipped at 1.05×, batching
+the rest *regressed* and was reverted). SIMD is a scalpel (k-mer packing/hashing; NEON popcount / branchless-select
+/ interleaved-layout are *disproven*). MLX is throughput-only and stays **off** the latency-bound rank/select
+traversal. Don't relitigate these without new measurement.
 
 ## Skills
 

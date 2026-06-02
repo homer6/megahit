@@ -316,21 +316,21 @@ void KmerCounter::Lv2Postprocess(int64_t start_index, int64_t end_index,
         if (strand == 0) {
           // update last
           uint32_t old_value = last_0_in_[seq_view.id()].v.load(
-              std::memory_order::memory_order_acquire);
+              std::memory_order_acquire);
           while ((old_value == kSentinelOffset || old_value < offset) &&
                  !last_0_in_[seq_view.id()].v.compare_exchange_weak(
-                     old_value, offset, std::memory_order::memory_order_release,
-                     std::memory_order::memory_order_relaxed)) {
+                     old_value, offset, std::memory_order_release,
+                     std::memory_order_relaxed)) {
           }
         } else {
           // update first
           offset++;
           uint32_t old_value = first_0_out_[seq_view.id()].v.load(
-              std::memory_order::memory_order_acquire);
+              std::memory_order_acquire);
           while (old_value > offset &&
                  !first_0_out_[seq_view.id()].v.compare_exchange_weak(
-                     old_value, offset, std::memory_order::memory_order_release,
-                     std::memory_order::memory_order_relaxed)) {
+                     old_value, offset, std::memory_order_release,
+                     std::memory_order_relaxed)) {
           }
         }
       }
@@ -349,20 +349,20 @@ void KmerCounter::Lv2Postprocess(int64_t start_index, int64_t end_index,
           // update first
           offset++;
           uint32_t old_value = first_0_out_[seq_view.id()].v.load(
-              std::memory_order::memory_order_acquire);
+              std::memory_order_acquire);
           while (old_value > offset &&
                  !first_0_out_[seq_view.id()].v.compare_exchange_weak(
-                     old_value, offset, std::memory_order::memory_order_release,
-                     std::memory_order::memory_order_relaxed)) {
+                     old_value, offset, std::memory_order_release,
+                     std::memory_order_relaxed)) {
           }
         } else {
           // update last
           uint32_t old_value = last_0_in_[seq_view.id()].v.load(
-              std::memory_order::memory_order_acquire);
+              std::memory_order_acquire);
           while ((old_value == kSentinelOffset || old_value < offset) &&
                  !last_0_in_[seq_view.id()].v.compare_exchange_weak(
-                     old_value, offset, std::memory_order::memory_order_release,
-                     std::memory_order::memory_order_relaxed)) {
+                     old_value, offset, std::memory_order_release,
+                     std::memory_order_relaxed)) {
           }
         }
       }
@@ -389,8 +389,8 @@ void KmerCounter::Lv0Postprocess() {
 
   for (size_t i = 0; i < seq_pkg_.seq_count(); ++i) {
     auto first =
-        first_0_out_[i].v.load(std::memory_order::memory_order_relaxed);
-    auto last = last_0_in_[i].v.load(std::memory_order::memory_order_relaxed);
+        first_0_out_[i].v.load(std::memory_order_relaxed);
+    auto last = last_0_in_[i].v.load(std::memory_order_relaxed);
 
     if (first != kSentinelOffset && last != kSentinelOffset) {
       ++num_has_tips;
