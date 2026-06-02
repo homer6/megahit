@@ -11,6 +11,8 @@
 #if defined(__x86_64__)
 #include <x86intrin.h>
 #endif
+#include <algorithm>
+#include <cstddef>
 #include <vector>
 
 namespace kmlib {
@@ -234,6 +236,54 @@ class RankAndSelect {
       ++pos;
     }
     return pos;
+  }
+
+  // --- batched queries -----------------------------------------------------------------------
+  // Proven lever (experiments/h3,h4): resolving a batch of independent rank/select queries in
+  // argument-SORTED order turns scattered DRAM misses into streaming access — measured ~3x for
+  // select, ~1.9x for rank, on a >L2 bitvector. Results are scattered back to input order, so the
+  // batched call is a drop-in for n separate select()/rank() calls. `scratch` is an optional
+  // reusable permutation buffer (pass one to avoid the per-call allocation in hot loops).
+  //
+  // out[i] = select(c, ks[i])   for i in [0, n)
+  void select_batch(uint8_t c, const size_type *ks, size_type *out, size_t n,
+                    std::vector<uint32_t> *scratch = nullptr) const {
+    std::vector<uint32_t> local;
+    std::vector<uint32_t> &ord = scratch ? *scratch : local;
+    ord.resize(n);
+    for (size_t i = 0; i < n; ++i) ord[i] = static_cast<uint32_t>(i);
+    std::sort(ord.begin(), ord.end(), [&](uint32_t a, uint32_t b) { return ks[a] < ks[b]; });
+    for (size_t i = 0; i < n; ++i) { uint32_t j = ord[i]; out[j] = InternalSelect(c, ks[j]); }
+  }
+  // out[i] = rank(c, ps[i])   for i in [0, n)
+  void rank_batch(uint8_t c, const size_type *ps, size_type *out, size_t n,
+                  std::vector<uint32_t> *scratch = nullptr) const {
+    std::vector<uint32_t> local;
+    std::vector<uint32_t> &ord = scratch ? *scratch : local;
+    ord.resize(n);
+    for (size_t i = 0; i < n; ++i) ord[i] = static_cast<uint32_t>(i);
+    std::sort(ord.begin(), ord.end(), [&](uint32_t a, uint32_t b) { return ps[a] < ps[b]; });
+    for (size_t i = 0; i < n; ++i) { uint32_t j = ord[i]; out[j] = InternalRank(c, ps[j]); }
+  }
+
+  // Allocation-free, order-preserving alternative to the sorted batch: software-prefetch the first
+  // index line P queries ahead (experiments/h4: ~1.5x for rank; no sort, no buffer). Preferred for
+  // bounded/streaming batches where a per-batch sort or heap allocation isn't worth it.
+  void select_batch_prefetch(uint8_t c, const size_type *ks, size_type *out, size_t n,
+                             int P = 16) const {
+    for (size_t i = 0; i < n; ++i) {
+      if (i + (size_t)P < n)
+        __builtin_prefetch(&rank2itv_[c][ks[i + P] / kSelectSampleSize], 0, 1);
+      out[i] = InternalSelect(c, ks[i]);
+    }
+  }
+  void rank_batch_prefetch(uint8_t c, const size_type *ps, size_type *out, size_t n,
+                           int P = 16) const {
+    for (size_t i = 0; i < n; ++i) {
+      if (i + (size_t)P < n)
+        __builtin_prefetch(packed_array_ + ps[i + P] / kBasesPerWord, 0, 0);
+      out[i] = InternalRank(c, ps[i]);
+    }
   }
 
  private:
