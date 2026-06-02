@@ -45,6 +45,8 @@ Build (from an experiment dir): `../build.sh` → links Google Benchmark with **
 
 `[#n]` = GitHub issue on `homer6/megahit`. Each row links to its `experiments/<id>-slug/README.md`.
 
+| **H8/H9** | The batched rank/select **API** (sorted + prefetch) realizes the levers in `RankAndSelect`. | API · [#4] | **DELIVERED** — `rank_batch_prefetch` **1.52×** (allocation-free); `select_batch` (pair-sort) **1.43×** incl. sort. The sort *algorithm* is the cost, not allocation; `std::inplace_vector` isn't in libc++ yet (C++26 compiles). See [`h9-stack-prefetch-batch/`](h9-stack-prefetch-batch/README.md). |
+
 > **Toolchain:** experiments build with **Homebrew clang 21** via [`build.sh`](build.sh) (AppleClang 15 ≈ LLVM 16 is too old; clang 21 confirmed to not change any conclusion, only ~3% absolute). The repo's `megahit_core` still builds with AppleClang for now.
 
 ## Honesty rules

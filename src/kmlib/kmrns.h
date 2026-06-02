@@ -13,6 +13,7 @@
 #endif
 #include <algorithm>
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 namespace kmlib {
@@ -246,24 +247,29 @@ class RankAndSelect {
   // reusable permutation buffer (pass one to avoid the per-call allocation in hot loops).
   //
   // out[i] = select(c, ks[i])   for i in [0, n)
+  // scratch: reusable buffer of (key,index) pairs. We sort the pairs *directly* (comparator reads
+  // `.first` in-place) rather than an index permutation with an indirect comparator — the latter
+  // does random `ks[a]` loads during the sort and thrashes cache, costing more than the locality it
+  // buys (experiments/h9). Pass a persistent `scratch` to avoid the per-call allocation in hot loops.
+  using BatchPair = std::pair<size_type, uint32_t>;
   void select_batch(uint8_t c, const size_type *ks, size_type *out, size_t n,
-                    std::vector<uint32_t> *scratch = nullptr) const {
-    std::vector<uint32_t> local;
-    std::vector<uint32_t> &ord = scratch ? *scratch : local;
-    ord.resize(n);
-    for (size_t i = 0; i < n; ++i) ord[i] = static_cast<uint32_t>(i);
-    std::sort(ord.begin(), ord.end(), [&](uint32_t a, uint32_t b) { return ks[a] < ks[b]; });
-    for (size_t i = 0; i < n; ++i) { uint32_t j = ord[i]; out[j] = InternalSelect(c, ks[j]); }
+                    std::vector<BatchPair> *scratch = nullptr) const {
+    std::vector<BatchPair> local;
+    std::vector<BatchPair> &kv = scratch ? *scratch : local;
+    kv.resize(n);
+    for (size_t i = 0; i < n; ++i) kv[i] = {ks[i], static_cast<uint32_t>(i)};
+    std::sort(kv.begin(), kv.end(), [](const BatchPair &a, const BatchPair &b) { return a.first < b.first; });
+    for (size_t i = 0; i < n; ++i) out[kv[i].second] = InternalSelect(c, kv[i].first);
   }
   // out[i] = rank(c, ps[i])   for i in [0, n)
   void rank_batch(uint8_t c, const size_type *ps, size_type *out, size_t n,
-                  std::vector<uint32_t> *scratch = nullptr) const {
-    std::vector<uint32_t> local;
-    std::vector<uint32_t> &ord = scratch ? *scratch : local;
-    ord.resize(n);
-    for (size_t i = 0; i < n; ++i) ord[i] = static_cast<uint32_t>(i);
-    std::sort(ord.begin(), ord.end(), [&](uint32_t a, uint32_t b) { return ps[a] < ps[b]; });
-    for (size_t i = 0; i < n; ++i) { uint32_t j = ord[i]; out[j] = InternalRank(c, ps[j]); }
+                  std::vector<BatchPair> *scratch = nullptr) const {
+    std::vector<BatchPair> local;
+    std::vector<BatchPair> &kv = scratch ? *scratch : local;
+    kv.resize(n);
+    for (size_t i = 0; i < n; ++i) kv[i] = {ps[i], static_cast<uint32_t>(i)};
+    std::sort(kv.begin(), kv.end(), [](const BatchPair &a, const BatchPair &b) { return a.first < b.first; });
+    for (size_t i = 0; i < n; ++i) out[kv[i].second] = InternalRank(c, kv[i].first);
   }
 
   // Allocation-free, order-preserving alternative to the sorted batch: software-prefetch the first

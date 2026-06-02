@@ -11,7 +11,7 @@ using namespace pe;
 
 struct Data {
   BitRS rs; std::vector<uint64_t> packed; uint64_t ones;
-  std::vector<int64_t> k, p, out, ref; std::vector<uint32_t> scratch;
+  std::vector<int64_t> k, p, out, ref; std::vector<BitRS::BatchPair> scratch;
 };
 static Data& data() {
   static Data d = [] {
