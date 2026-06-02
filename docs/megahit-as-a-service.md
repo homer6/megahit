@@ -15,7 +15,7 @@
 
 Ship T as the product; gate S behind the falsifiable locality hypothesis (§5).
 
-## 1. Service model — single node first
+## 1. The node — per-shard assembly engine (a cluster member)
 
 **The pipeline as `co_await`-ed coroutine stages.** The driver's strict per-sample serial DAG
 (`build_library → build_first_graph(k_min) → assemble(k_min) → ∀k: local_assemble → iterate → build_graph(seq2sdbg)
@@ -62,7 +62,7 @@ persistence, retries/timeouts/cancel. `src/` has zero existing Seastar usage —
 
 ## 2. Tier T — throughput scale-out (build this)
 
-Single-node §1 lifted across nodes by routing the **job-id space, never the graph** — exactly the Scylla/Redpanda
+The §1 node, with the cluster routing the **job-id space, never the graph** — exactly the Scylla/Redpanda
 layering: **RPC picks the node, `smp::submit_to` picks the core** (`job_id → (node, shard)`). Network cost is paid
 **once per job** (submit + result), never on the hot traversal path; inside the node it is verbatim §1.
 
@@ -136,14 +136,18 @@ is the only candidate, and why Tier T (which sidesteps the question entirely) is
 
 ## 6. Phased plan (hypothesis + kill per phase)
 
-- **Phase 0 — single-node Seastar service.** *Scaffold landed* in [`../src/server/`](../src/server/): Seastar
-  vendored (`modules/seastar`); `sharded<AssemblyEngine>` + the multi-k pipeline as `co_await`-ed stages that call
-  the `megahit_core` `main_*` entry points **in-process** via `seastar::async` (off-reactor) — the **strangler step**
-  (replaces the Python fork/exec; not yet built — Linux-only, no compiler feedback yet). *Remaining for Phase 0:*
-  build on Linux (`-DBUILD_SEASTAR_SERVER=ON`); replace the per-stage argv-shelling with native typed calls; add the
-  HTTP/RPC front door + semaphore admission; then move the build stages to in-shard Seastar parallelism (dissolving
-  the `-t>1` CX1 bug by ownership). *H0:* output-correct and ≥ the CLI single-thread speed, multicore now correct.
-  *Kill:* if re-modeling the shared `invalid_`/`id_map_` regresses single-node throughput vs the CLI, reconsider scope.
+- **Phase 0 — the cluster foundation + node scaffold (cluster-first).** *Scaffold landed* in
+  [`../src/server/`](../src/server/): Seastar vendored (`modules/seastar`); each node runs
+  `sharded<AssemblyEngine>` and assembles whole samples on its shards; the **cluster layer** routes a job to its
+  owning node (`hash(job_id) % nodes`) over Seastar RPC — running it locally or forwarding — so a 1-node
+  deployment is simply a cluster of one and there is *no* single-node-only code path. The pipeline runs as
+  `co_await`-ed stages that call the `megahit_core` `main_*` entry points in-process via `seastar::async`
+  (off-reactor); these are replaced stage-by-stage with native typed code. Not yet built (Linux-only).
+  *Remaining for Phase 0:* build on Linux (`-DBUILD_SEASTAR_SERVER=ON`); the RPC serializer for
+  `SampleJob`/`AssemblyResult` + static membership; the job front door (HTTP/RPC) + `semaphore` admission; then
+  move the build stages to in-shard Seastar parallelism (dissolving the `-t>1` CX1 bug by ownership).
+  *H0:* a 1-node cluster assembles a sample end-to-end, output bit-identical (final.contigs.fa md5 vs baseline),
+  and a 2-node cluster routes a job submitted to node A onto node B and returns the result.
 - **Phase 1 — multicore within a node** (job-level shards; per-sample on one shard, many samples across shards).
   *H1:* near-linear sample throughput across cores; bit-identical contigs (md5 vs the captured baseline `bf2c562…`).
 - **Phase 2 — Tier T across nodes** (RPC job routing, result store, membership). *H2:* near-linear node scaling on a

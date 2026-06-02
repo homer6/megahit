@@ -120,6 +120,7 @@ if (BUILD_SEASTAR_SERVER)
             ${CX1_SOURCE} ${TOOLKIT_SOURCE})
     add_executable(megahit_server
             src/server/main.cc
+            src/server/cluster.cc
             src/server/assembly_engine.cc
             ${MEGAHIT_STAGE_SOURCE})
     target_include_directories(megahit_server PRIVATE src)
