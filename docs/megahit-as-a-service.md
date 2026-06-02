@@ -136,10 +136,14 @@ is the only candidate, and why Tier T (which sidesteps the question entirely) is
 
 ## 6. Phased plan (hypothesis + kill per phase)
 
-- **Phase 0 — single-node Seastar service.** Port §1 to `sharded<AssemblyEngine>` + co_await stages + HTTP/RPC front
-  door + semaphore admission + gate shutdown; OpenMP → in-shard Seastar parallelism (dissolves the `-t>1` CX1 bug by
-  ownership). *H0:* output-correct and ≥ the CLI single-thread speed, multicore now correct. *Kill:* if re-modeling
-  the shared `invalid_`/`id_map_` regresses single-node throughput vs the CLI, reconsider scope.
+- **Phase 0 — single-node Seastar service.** *Scaffold landed* in [`../src/server/`](../src/server/): Seastar
+  vendored (`modules/seastar`); `sharded<AssemblyEngine>` + the multi-k pipeline as `co_await`-ed stages that call
+  the `megahit_core` `main_*` entry points **in-process** via `seastar::async` (off-reactor) — the **strangler step**
+  (replaces the Python fork/exec; not yet built — Linux-only, no compiler feedback yet). *Remaining for Phase 0:*
+  build on Linux (`-DBUILD_SEASTAR_SERVER=ON`); replace the per-stage argv-shelling with native typed calls; add the
+  HTTP/RPC front door + semaphore admission; then move the build stages to in-shard Seastar parallelism (dissolving
+  the `-t>1` CX1 bug by ownership). *H0:* output-correct and ≥ the CLI single-thread speed, multicore now correct.
+  *Kill:* if re-modeling the shared `invalid_`/`id_map_` regresses single-node throughput vs the CLI, reconsider scope.
 - **Phase 1 — multicore within a node** (job-level shards; per-sample on one shard, many samples across shards).
   *H1:* near-linear sample throughput across cores; bit-identical contigs (md5 vs the captured baseline `bf2c562…`).
 - **Phase 2 — Tier T across nodes** (RPC job routing, result store, membership). *H2:* near-linear node scaling on a

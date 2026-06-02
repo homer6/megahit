@@ -58,9 +58,13 @@ clang-format, Google style (see `.clang-format`); the language standard is now *
 the orchestrator — option parsing, output-dir setup, host-CPU binary dispatch, checkpoint/resume, and the
 stage-by-stage `megahit_core` invocation. Its full functional contract (pipeline order, per-stage commands +
 flags, k-list rules, checkpoint semantics, file layout) is preserved as a port spec in
-**[`docs/legacy-driver-spec.md`](docs/legacy-driver-spec.md)**, and is being rebuilt as a **Seastar service**
-(coroutine stages on a `sharded<>` engine — see [`docs/megahit-as-a-service.md`](docs/megahit-as-a-service.md)).
-Until that lands there is **no end-to-end run path**; `megahit_core` subcommands are invoked manually.
+**[`docs/legacy-driver-spec.md`](docs/legacy-driver-spec.md)**, and is being rebuilt as a **Seastar service** —
+the **Phase-0 scaffold is in [`src/server/`](src/server/)**: `seastar::sharded<AssemblyEngine>` running the
+multi-k pipeline as `co_await`-ed stages that call the `megahit_core` `main_*` stage entry points **in-process**
+(via `seastar::async`, off-reactor) — the strangler step (Seastar vendored at `modules/seastar`; build with
+`-DBUILD_SEASTAR_SERVER=ON` on Linux; design in [`docs/megahit-as-a-service.md`](docs/megahit-as-a-service.md)).
+It is **not yet built/run** (Linux-only; no compiler feedback yet) and there is **no end-to-end run path** until
+it is; `megahit_core` subcommands can be invoked manually meanwhile.
 
 The pipeline the orchestrator runs (unchanged, now in-process coroutines): `build_library → build_first_graph`
 (k_min) → `assemble(k_min)` → then per subsequent *k*: `local_assemble → iterate → build_graph → assemble` →
