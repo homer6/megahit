@@ -139,6 +139,22 @@ class SDBG {
     rs_last_.select_batch(1, arg.data(), out, n, scratch);
   }
 
+  // Batched UniqueNextEdge: out[i] = UniqueNextEdge(edge_ids[i]) (== kNullID if not unique/invalid).
+  // Batches the scattered Forward (ForwardBatch) then reuses the *identical* scalar outdegree scan
+  // (ComputeOutgoingsFrom) — no logic duplication. Foundation for the batched NextSimplePathEdge filter (#4).
+  void UniqueNextEdgeBatch(const uint64_t *edge_ids, uint64_t *out, size_t n) const {
+    std::vector<int64_t> fwd(n);
+    ForwardBatch(edge_ids, fwd.data(), n);
+    for (size_t i = 0; i < n; ++i) {
+      if (!IsValidEdge(edge_ids[i])) { out[i] = kNullID; continue; }
+      uint64_t ret = 0;
+      out[i] = (ComputeOutgoingsFrom<kFlagWriteOut | kFlagMustEq1>(
+                    static_cast<uint64_t>(fwd[i]), &ret) == 1)
+                   ? ret
+                   : kNullID;
+    }
+  }
+
  private:
   const label_word_t *TipLabelStartPtr(uint64_t edge_id) const {
     return content_.tip_lables.data() +
@@ -317,8 +333,16 @@ class SDBG {
     if (!IsValidEdge(edge_id)) {
       return -1;
     }
+    return ComputeOutgoingsFrom<flag>(Forward(edge_id), outgoings);
+  }
+
+  // The outgoing-degree scan starting from `next_edge` = Forward(edge_id). Extracted from
+  // ComputeOutgoings so batched callers can supply a pre-resolved (e.g. ForwardBatch'd) Forward and
+  // reuse this *identical* scan — no logic duplication (experiments h11/h12). Behavior-preserving:
+  // ComputeOutgoings now == old ComputeOutgoings (validate via `megahit --test`).
+  template <uint8_t flag = 0>
+  int ComputeOutgoingsFrom(uint64_t next_edge, uint64_t *outgoings) const {
     uint64_t outdegree = 0;
-    uint64_t next_edge = Forward(edge_id);
     do {
       if (IsValidEdge(next_edge)) {
         if (flag & kFlagMustEq0) {
