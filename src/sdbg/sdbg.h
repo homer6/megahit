@@ -184,6 +184,33 @@ class SDBG {
     }
   }
 
+  // Batched NextSimplePathEdge: out[i] = NextSimplePathEdge(edge_ids[i]).
+  // NextSimplePathEdge is two-stage *dependent* — next = UniqueNextEdge(e); keep it iff UniquePrevEdge(next)
+  // is also unique. So this is a two-phase batch: batch UniqueNextEdge over all edges, gather the non-null
+  // successors, batch the dependent UniquePrevEdge over only those, recombine. Composed from the
+  // already-validated H12 + H13 batches, so it equals scalar by construction. This is the primitive the
+  // assemble first-sweep filter (`NextSimplePathEdge(e) == kNullID`, one call per edge) needs.
+  void NextSimplePathEdgeBatch(const uint64_t *edge_ids, uint64_t *out, size_t n) const {
+    std::vector<uint64_t> next(n);
+    UniqueNextEdgeBatch(edge_ids, next.data(), n);
+    std::vector<uint64_t> succ;        // next[i] for the survivors (next != kNullID)
+    std::vector<size_t> idx;           // their original positions
+    succ.reserve(n);
+    idx.reserve(n);
+    for (size_t i = 0; i < n; ++i) {
+      out[i] = kNullID;
+      if (next[i] != kNullID) {
+        succ.push_back(next[i]);
+        idx.push_back(i);
+      }
+    }
+    std::vector<uint64_t> prev_of_succ(succ.size());
+    UniquePrevEdgeBatch(succ.data(), prev_of_succ.data(), succ.size());
+    for (size_t j = 0; j < succ.size(); ++j) {
+      if (prev_of_succ[j] != kNullID) out[idx[j]] = succ[j];  // succ[j] == next[idx[j]]
+    }
+  }
+
  private:
   const label_word_t *TipLabelStartPtr(uint64_t edge_id) const {
     return content_.tip_lables.data() +
