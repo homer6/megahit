@@ -483,6 +483,14 @@ def setup_logger():
     logger.info(software_info.megahit_version)
 
 
+def _available_cpus():
+    # os.sched_getaffinity is Linux-only; fall back to cpu_count on macOS/BSD.
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
 def check_and_correct_option():
     # set mode
     if opt.memory < 0:
