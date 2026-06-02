@@ -103,4 +103,28 @@ add_dependencies(megahit_toolkit megahit_core_no_hw_accel)
 
 install(TARGETS megahit_core megahit_core_popcnt megahit_core_no_hw_accel DESTINATION bin)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/megahit_toolkit DESTINATION bin)
+
+# ---- Seastar assembly service (Phase 0 of the rewrite; LINUX ONLY — Seastar has no macOS reactor, see
+#      docs/seastar-guide.md §0 and docs/megahit-as-a-service.md). OFF by default so the legacy build on any
+#      host is unaffected; enable on a Linux box / container with -DBUILD_SEASTAR_SERVER=ON.
+option(BUILD_SEASTAR_SERVER "Build the Seastar assembly service (Linux only)" OFF)
+if (BUILD_SEASTAR_SERVER)
+    find_package(Seastar REQUIRED)   # provide Seastar's build dir via -DSeastar_DIR=... or pkg-config
+    # The service reuses every megahit_core stage TU EXCEPT src/main.cpp (it supplies its own entry point).
+    # (Transitional: factor these into a shared stage object-library in a later phase to avoid the duplicated
+    # list; kept explicit for now to minimize churn to the legacy targets.)
+    set(MEGAHIT_STAGE_SOURCE
+            src/main_assemble.cpp src/main_buildlib.cpp src/main_iterate.cpp
+            src/main_local_assemble.cpp src/main_sdbg_build.cpp src/utils/options_description.cpp
+            ${ASMBL_SOURCE} ${IDBA_SOURCE} ${SDBG_SOURCE} ${LCASM_SOURCE} ${SEQ_SOURCE}
+            ${CX1_SOURCE} ${TOOLKIT_SOURCE})
+    add_executable(megahit_server
+            src/server/main.cc
+            src/server/assembly_engine.cc
+            ${MEGAHIT_STAGE_SOURCE})
+    target_include_directories(megahit_server PRIVATE src)
+    target_link_libraries(megahit_server PRIVATE Seastar::seastar ${ZLIB_LIBRARIES})
+    # NOTE: the reused stage code still uses OpenMP internally; it runs OFF the reactor via seastar::async
+    # (assembly_engine.cc). Replacing OpenMP with shard parallelism is a later migration phase.
+endif ()
 install(DIRECTORY test_data DESTINATION share/${PROJECT_NAME})
