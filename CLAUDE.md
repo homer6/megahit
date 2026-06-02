@@ -90,3 +90,45 @@ has a `main_*.cpp` entry point:
   K-mer storage word counts in `definitions.h` derive from it.
 - K values must be **odd**, in range 15–`kMaxK`, with adjacent increments **≤ 28** (enforced in the driver).
 - DNA is 2-bit encoded (`kBitsPerChar = 2`, alphabet ACGT); the SdBG W-alphabet is 4-bit.
+
+## Profiling
+
+This is a performance fork, so profiling is first-class. **When profiling, benchmarking, or measuring
+runtime/IPC/cache/memory, use the `megahit-profiling` skill** (`.claude/skills/megahit-profiling/`) and
+record the result as a datetime-stamped directory under **`profiling-history/`** (committed history; raw
+data/outputs stay in the gitignored `profiling/`).
+
+Key facts the skill encodes (macOS / Apple Silicon):
+- No Linux `perf`. `/usr/bin/time -l` gives wall, peak RSS, and `instructions retired` + `cycles elapsed`
+  (→ **IPC**); Xcode `xctrace` gives cache counters; `sample` gives hotspots.
+- Profile `megahit_core` *stages* directly — `time -l` on the `megahit` Python wrapper only measures Python,
+  not the child processes that do the work.
+- Always record the **exact build flags** (`-O3` vs debug, `-mcpu`/native tuning, language std) — they
+  dominate results. The committed baseline (`profiling-history/2026-06-01T221830-baseline-single-thread/`) is
+  Release `-O3`, *untuned* (no `-mcpu`/`-march`), `gnu++11`.
+- **Single-threaded only for now**: the parallel CX1 sort path has a deterministic data-corruption bug on
+  arm64 (`-t > 1` → `assert edge_writer.h:72` / SIGSEGV). Single-thread is clean.
+
+## macOS / Apple Silicon build & known issues
+
+This fork targets macOS / Apple Silicon (see `README.md` for the build recipe; the OpenMP/libomp flags are
+required because the upstream CMakeLists never links libomp). Notes:
+- The C++ `megahit_core` builds and runs; on arm64 the x86 `-mbmi2/-mpopcnt` paths are inert and runtime
+  dispatch selects `megahit_core_no_hw_accel`.
+- The `src/megahit` Python driver needed a macOS fix (`os.sched_getaffinity` → `_available_cpus()`); it is
+  slated for removal in the planned C++23 rewrite.
+- **Known bug:** multithreaded CX1 sort corruption on arm64 (above) — gates parallel runs until fixed.
+
+## Modernization direction & docs
+
+Planned: drop the Python driver for a **C++23-only** build, replace **OpenMP with Boost.Cobalt coroutines**
+(single-process orchestration; vendored as the `modules/cobalt` submodule — see
+`docs/boost-cobalt-macos-build.md`), and evaluate SIMD / MLX for hot paths. Research and build notes live in
+[`docs/`](docs/) (start with `docs/README.md`).
+
+## Skills
+
+Project skills in `.claude/skills/`:
+- **`megahit-profiling`** — run + record a profiling pass (see Profiling above).
+- **`skill-writer`** — author new Agent Skills (frontmatter, structure, validation). Use it when creating
+  more project skills. (Newly added skills load on Claude Code restart.)
