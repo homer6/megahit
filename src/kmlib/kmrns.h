@@ -258,7 +258,7 @@ class RankAndSelect {
     std::vector<BatchPair> &kv = scratch ? *scratch : local;
     kv.resize(n);
     for (size_t i = 0; i < n; ++i) kv[i] = {ks[i], static_cast<uint32_t>(i)};
-    std::sort(kv.begin(), kv.end(), [](const BatchPair &a, const BatchPair &b) { return a.first < b.first; });
+    radix_sort_pairs(kv);
     for (size_t i = 0; i < n; ++i) out[kv[i].second] = InternalSelect(c, kv[i].first);
   }
   // out[i] = rank(c, ps[i])   for i in [0, n)
@@ -268,7 +268,7 @@ class RankAndSelect {
     std::vector<BatchPair> &kv = scratch ? *scratch : local;
     kv.resize(n);
     for (size_t i = 0; i < n; ++i) kv[i] = {ps[i], static_cast<uint32_t>(i)};
-    std::sort(kv.begin(), kv.end(), [](const BatchPair &a, const BatchPair &b) { return a.first < b.first; });
+    radix_sort_pairs(kv);
     for (size_t i = 0; i < n; ++i) out[kv[i].second] = InternalRank(c, kv[i].first);
   }
 
@@ -293,6 +293,29 @@ class RankAndSelect {
   }
 
  private:
+  // LSD radix sort of (key,index) pairs by key (11-bit digits, early-out past the max key). O(n),
+  // cache-friendly — recovers most of the sorted-batch locality win that std::sort gives back to its
+  // own cost (experiments/h10: 2.72x vs 1.34x for std::sort, ~3x ceiling).
+  static void radix_sort_pairs(std::vector<BatchPair> &kv) {
+    const int R = 11, B = 1 << R, M = B - 1;
+    const size_t n = kv.size();
+    if (n < 2) return;
+    std::vector<BatchPair> tmp(n);
+    uint64_t maxk = 0;
+    for (const auto &p : kv) maxk = std::max<uint64_t>(maxk, static_cast<uint64_t>(p.first));
+    BatchPair *a = kv.data(), *b = tmp.data();
+    for (int shift = 0; (maxk >> shift) > 0; shift += R) {
+      size_t cnt[B + 1];
+      for (int i = 0; i <= B; ++i) cnt[i] = 0;
+      for (size_t i = 0; i < n; ++i) ++cnt[(static_cast<uint64_t>(a[i].first) >> shift) & M];
+      size_t s = 0;
+      for (int i = 0; i < B; ++i) { size_t c = cnt[i]; cnt[i] = s; s += c; }
+      for (size_t i = 0; i < n; ++i) b[cnt[(static_cast<uint64_t>(a[i].first) >> shift) & M]++] = a[i];
+      std::swap(a, b);
+    }
+    if (a != kv.data()) std::copy(tmp.begin(), tmp.end(), kv.begin());
+  }
+
   unsigned CountCharInWord(uint8_t c, word_type x,
                            word_type mask = word_type(-1)) const {
     if (BaseSize != 1) {
