@@ -27,28 +27,48 @@ git add modules/cobalt .gitmodules
 # on fresh checkouts:  git submodule update --init --recursive
 ```
 
-The compiled runtime is just five files — `modules/cobalt/src/`:
+The compiled runtime is **seven** files (per `modules/cobalt/CMakeLists.txt`'s `boost_cobalt` target) — the
+top-level `src/*.cpp` **plus `src/detail/`** (the original "five files" note missed these — `exception.cpp`
+defines `already_awaited`/`throw_bad_executor`/`completed_unexpected`, so omitting it fails to link):
 
 ```
-channel.cpp   error.cpp   main.cpp   this_thread.cpp   thread.cpp
+src/detail/exception.cpp  src/detail/util.cpp
+src/channel.cpp  src/error.cpp  src/main.cpp  src/this_thread.cpp  src/thread.cpp
 ```
 
-Compile these alongside our driver TUs with `-I/opt/homebrew/include` (system Boost provides Cobalt's header-only deps: Asio, System, MP11, Leaf, Variant2) and link `boost_container` (Cobalt's PMR allocators). Minimal verified pattern:
+(`src/io/*.cpp` is a **separate** `boost_cobalt_io` target — networking/timers, needs OpenSSL etc. — and is
+**not** needed to orchestrate stages.) **Verified, working** pattern (see `src/driver/build-cobalt-smoke.sh`
+and the runnable proof `src/driver/cobalt_smoke.cpp`):
 
 ```sh
-clang++ -std=c++2b -stdlib=libc++ -I/opt/homebrew/include \
-  our_driver.cpp modules/cobalt/src/*.cpp \
-  -L/opt/homebrew/lib -lboost_container -o megahit
+clang++ -std=c++2b -stdlib=libc++ -isysroot "$(xcrun --show-sdk-path)" \
+  -DBOOST_COBALT_SOURCE=1 -DBOOST_COBALT_USE_BOOST_CONTAINER_PMR=1 \
+  -I modules/cobalt/include -I /opt/homebrew/include \
+  our_driver.cpp modules/cobalt/src/*.cpp modules/cobalt/src/detail/*.cpp \
+  -L /opt/homebrew/lib -lboost_container -o megahit
 ```
 
-> **TBD:** Boost's separately-compiled libraries normally want a `BOOST_COBALT_SOURCE`-style define when building their `src/*.cpp` (symbol decl/visibility). The macro wasn't where first expected (`detail/config.hpp`); confirm the exact name/location and whether it's needed for a static in-binary build when wiring the CMake target. Watch for duplicate-symbol or visibility warnings if omitted.
+> **TBD → RESOLVED.** Two defines are needed (both from Cobalt's own CMake): **`BOOST_COBALT_SOURCE=1`**
+> (Cobalt sets it `PRIVATE` on its `src/*.cpp`; on a static in-binary build `BOOST_COBALT_DECL` is empty
+> regardless, so applying it to the whole single-invocation build is harmless) and
+> **`BOOST_COBALT_USE_BOOST_CONTAINER_PMR=1`** (`PUBLIC`; selects boost::container PMR → the `-lboost_container`).
+> **Do NOT link `boost_system`** — it is header-only in Boost 1.90 (no `libboost_system` exists); `boost_container`
+> is the only Boost lib needed. No duplicate-symbol/visibility issues observed.
 
 `boostorg/cobalt` is pinned as a **git submodule** at `modules/cobalt` (tag `boost-1.90.0`, recorded in `.gitmodules`), so its version tracks the installed Boost headers and fresh clones pick it up via `git submodule update --init --recursive`. (`FetchContent` was the alternative — rejected to keep the dependency explicit and offline-buildable once checked out.)
 
 ## Toolchain facts (this machine)
 
-- **Compiler:** AppleClang 15.0.0 (CommandLineTools), arm64. Meets Cobalt's "Clang 16+" floor in practice — coroutines compile and run.
-- **C++23 flag:** use **`-std=c++2b`**. AppleClang 15 rejects `-std=c++23` outright. (When setting `CMAKE_CXX_STANDARD 23`, verify CMake emits `c++2b` for this compiler; otherwise pass the flag directly.)
+- **Compiler: use AppleClang + system libc++, NOT Homebrew clang.** AppleClang 15.0.0 (CommandLineTools),
+  arm64, compiles and runs Cobalt's coroutines (meets the "Clang 16+" floor in practice). Building the
+  smoke test with **Homebrew clang 21 fails to link** — its newer libc++ *headers* reference libc++abi
+  symbols absent from the system SDK (`__cxa_init_primary_exception`,
+  `std::exception_ptr::__from_native_exception_pointer`). More importantly, **Homebrew's Boost libs are built
+  against the system libc++ ABI**, and `megahit_core` builds with AppleClang too — so the whole C++23 megahit
+  (driver + core + Boost) must share **one** libc++. AppleClang/system-libc++ is that toolchain.
+- **C++23 flag:** AppleClang emits **`-std=gnu++2b`** for `CMAKE_CXX_STANDARD 23` (it rejects the literal
+  `c++23`); that *is* C++23 mode. The whole project is now `CMAKE_CXX_STANDARD 23` (see `CMakeLists.txt`); the
+  vendored-dep C++23 patches are noted in `parallel_hashmap/phmap*.h` and `idba/hash.h` (`[megahit C++23 patch]`).
 - **`<generator>` (C++23) is NOT in this libc++** — `#include <generator>` fails. Use `cobalt::generator` (which is async and `co_await`-able anyway), not `std::generator`.
 - **Boost:** 1.90.0 (`BOOST_VERSION 109000`). `libboost_container` is present and required for Cobalt PMR.
 - Cobalt requires **C++20 minimum** and runs all coroutines on a single `asio::io_context`; CPU-bound work must be explicitly offloaded (thread pool) and `co_await`-ed back.

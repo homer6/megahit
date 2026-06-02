@@ -6,11 +6,15 @@
 # Vendored Cobalt headers come FIRST on the include path (offline, version-pinned); the system Boost prefix
 # supplies Cobalt's header-only deps (Asio, System, MP11, Leaf, Variant2) and the compiled libboost_container.
 #
-# Toolchain: Homebrew clang (C++23) — the newer compiler intended for the C++23 driver. AppleClang 15 also
-# works with -std=c++2b (see the build doc).
+# Toolchain: **system AppleClang + system libc++** — NOT Homebrew clang. Homebrew's Boost libs (libboost_*)
+# are built against the system libc++ ABI, and `megahit_core` also builds with AppleClang; using Homebrew
+# clang's newer libc++ here instead causes undefined libc++abi symbols (__cxa_init_primary_exception, etc.)
+# and would ABI-mismatch the Boost libs. AppleClang 15 compiles Cobalt's coroutines fine at -std=c++2b
+# (== C++23 mode; AppleClang rejects the literal `c++23`). Override with CXX=... STD=... if needed.
 set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-LLVM="${LLVM:-/opt/homebrew/opt/llvm/bin/clang++}"
+LLVM="${CXX:-$(xcrun -f clang++)}"
+STD="${STD:-c++2b}"
 SDK="$(xcrun --show-sdk-path)"
 P="$(brew --prefix)"
 OUT="${1:-/tmp/cobalt_smoke}"
@@ -27,9 +31,9 @@ fi
 # BOOST_COBALT_DECL is empty regardless of SOURCE, so a single invocation with both defines is fine.
 COBALT_SRC=("$REPO"/modules/cobalt/src/*.cpp "$REPO"/modules/cobalt/src/detail/*.cpp)
 
-"$LLVM" -std=c++23 -O2 -stdlib=libc++ -isysroot "$SDK" \
+"$LLVM" -std="$STD" -O2 -stdlib=libc++ -isysroot "$SDK" \
   -DBOOST_COBALT_SOURCE=1 -DBOOST_COBALT_USE_BOOST_CONTAINER_PMR=1 \
   -I "$REPO/modules/cobalt/include" -I "$P/include" \
   "$REPO/src/driver/cobalt_smoke.cpp" "${COBALT_SRC[@]}" \
-  -L "$P/lib" -lboost_container -lboost_system -o "$OUT"
+  -L "$P/lib" -lboost_container -o "$OUT"
 echo "built $OUT  [$("$LLVM" --version | head -1)]"
