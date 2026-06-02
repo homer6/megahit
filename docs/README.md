@@ -18,6 +18,14 @@ Concrete engineering findings/decisions for this fork (not external research):
 | [`boost-cobalt-macos-build.md`](boost-cobalt-macos-build.md) | How to actually build against **Boost.Cobalt** on macOS/Apple Silicon: Homebrew's Boost 1.90 ships Cobalt headers but **no compiled `libboost_cobalt`**, so we vendor its five `src/*.cpp` at the matching tag and compile in-tree (link `boost_container`). Plus toolchain facts: use `-std=c++2b` (AppleClang rejects `c++23`), `<generator>` is absent in this libc++ (use `cobalt::generator`). |
 | [`workload-profile.md`](workload-profile.md) | **Measured profile** — where the assembler spends time and *why*: `assemble` (~56%) is succinct-dBG **rank/select**-bound (IPC 1.46; arm64 `PDEP` gap in `select-in-word`), `local` (~30%) is compute-bound k-mer hashing (IPC 4.07), `count` (~10%) is scan/copy/sort. Plus the **solution space** (multicore, **batching**, SIMD/NEON broadword, sorted/alt search structures, MLX). Raw runs: [`../profiling-history/`](../profiling-history/README.md). |
 
+## Experiments & skills
+
+- [`../experiments/`](../experiments/README.md) — hypothesis-driven optimization experiments (Google
+  Benchmark / clang 21). Their measured verdicts feed the **Experimental evidence** section of
+  `workload-profile.md` (kernel & layout DISPROVEN; sorted-batch PROVEN 3.07×).
+- Skills: `.claude/skills/performance-engineering/` (design + run experiments) and
+  `.claude/skills/megahit-profiling/` (profile whole runs → `profiling-history/`).
+
 ## Provenance
 
 The four research artifacts were captured from external research. The three `boost-capy-*` / `mlx-*` files are **verbatim copies** of the orama-platform research set (the originals live in a separate repo and were read-only here). `macos-simd-and-mlx.md` was **authored from a captured AI overview**, with a provenance banner and the original inline citations preserved.

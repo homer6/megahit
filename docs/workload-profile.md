@@ -28,6 +28,27 @@ Apple Silicon. Measured, not assumed. Companion to the run records in
   billions of *independent* single-query pointer-chases into bulk operations) before SIMD/GPU/NPU can apply.
   Batching is the bridge, not an afterthought.
 
+## Experimental evidence (measured verdicts — override the brainstorm below)
+
+Hypothesis-driven experiments (Google Benchmark, Homebrew clang 21, M3 Max — see
+[`../experiments/`](../experiments/README.md), driven by the `performance-engineering` skill) have **tested**
+the candidate levers. Where these contradict the multi-model "Solution directions" further down, **the
+measurement wins.**
+
+| Lever | Verdict | Measured |
+|---|---|---|
+| in-word select kernel (branchless / `consteval` table) | **DISPROVEN as stated** | only ~1.3× on *independent* queries — a hand-rolled bench's "6.8×" was an artifact — and ~1.7× **slower** on the dependent traversal chain; the table ties the branchless kernel (`h1-select-in-word`) |
+| **sorted-batch select** | **PROVEN — 3.07×** | compiler-independent (cache locality + HW prefetch); **the rewrite-justifying lever** (`h3-sorted-batch`) |
+| interleaved 128 B (rank9) layout | **DISPROVEN** (rank, 512 Mbit) | ≈/slightly slower — `l1_occ_`(1 MB)+`l2_occ_`(64 KB) already fit L2, so rank is already ~1 DRAM miss; nothing to coalesce (`h5-interleaved-layout`). Caveat: W-array / select / multi-Gbit untested |
+| toolchain (`-mcpu=native`, clang 21) | ~null | clang 21 ≈ +3% vs AppleClang 15; conclusions unchanged (`h7`) |
+
+**Bottom line for the rewrite:** the only *proven* lever is the **query access pattern** — batch the
+rank/select queries and resolve them **sorted** (3×). The bit-twiddling kernel and the bitvector layout were
+both **disproven by measurement**, despite being the most-confidently-recommended ideas. Spend the rewrite
+budget on a **batched, sorted SdBG traversal** (issue #4), which also composes with multithreading (#3) — not
+on a broadword select (#5) or an interleaved layout (#7). Pending experiments: H4 (explicit prefetch-ahead),
+H6 (NEON build popcount).
+
 ## Where the time goes (measured)
 
 Full single-threaded pipeline ≈ **239 s** (`-mcpu=native`) / **251 s** (untuned `-O3`) for 500K pairs.

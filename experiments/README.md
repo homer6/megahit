@@ -39,7 +39,7 @@ Build (from an experiment dir): `../build.sh` → links Google Benchmark with **
 | **H2** | A `consteval` byte-**table** select (shift-free) is ≥ the branchless kernel on Apple Silicon. | consteval / no-shift · [#5] | **DISPROVEN** — tied with branchless; shift-free ≠ faster. See [`h1-select-in-word/`](h1-select-in-word/README.md). |
 | **H3** | **Sorting** a batch of select queries cuts time vs unsorted random (cache locality / HW prefetch), with no structural change. | sorted batches · [#4] | **PROVEN — 3.07×** (compiler-independent). The rewrite-justifying lever. See [`h3-sorted-batch/`](h3-sorted-batch/README.md). |
 | **H4** | A batched API with **software prefetch** N queries ahead hides memory latency (closes latency→throughput gap). | prefetch · [#4] | planned |
-| **H5** | A **128-byte interleaved** (rank9/poppy) layout co-locating L1/L2 counts + data cuts rank/select misses 2–3→1 → ~2–3×. | layout · [#7] | planned (rewrite prototype) |
+| **H5** | A **128-byte interleaved** (rank9/poppy) layout cuts rank misses 2–3→1 → ~2–3×. | layout · [#7] | **DISPROVEN** (rank, 512 Mbit) — interleaved ≈/slightly slower; the index (`l1_occ_` 1 MB) already fits L2, so rank is already ~1 DRAM miss. Caveat: W-array / select / multi-Gbit untested. See [`h5-interleaved-layout/`](h5-interleaved-layout/README.md). |
 | **H6** | **NEON** multi-word popcount (`vcntq_u8`, multiple accumulators) speeds `CountCharInWords`/build vs scalar per-word. | NEON · [#6] | planned |
 | **H7** | Compiler tuning (`-mcpu=native`, newer clang) is **~null** on the memory-bound hot path. | toolchain | **PARTIAL/confirmed** — `-mcpu=native` ≈ null on `count`; **clang 21 vs AppleClang 15 ≈ +3%** absolute on H1/H3, conclusions unchanged. |
 
