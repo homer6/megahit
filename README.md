@@ -11,14 +11,21 @@ it that gets in the way of the Apple Silicon target.
 Status
 ------
 
-Early and under active surgery. Performance on Apple Silicon is the **goal**, not a measured result yet.
-In progress:
+Early and under active surgery. An end-to-end Apple Silicon speedup is the **goal**, not a delivered result
+yet — but the optimization work is **hypothesis-driven and measured**, not speculative. In progress:
 
 - Removing the Python driver in favor of a **C++23-only** build.
-- Replacing **OpenMP** with **C++23 coroutines** on the [Boost.Capy](https://github.com/cppalliance/capy) foundation.
+- Replacing **OpenMP** with **C++23 coroutines** on the [Boost.Cobalt](https://github.com/boostorg/cobalt) foundation.
 - Evaluating **SIMD** (Accelerate / ARM NEON) and **MLX** for the hot paths (k-mer counting/sorting, SdBG rank/select).
+- **Batching the SdBG rank/select hot path.** Profiling pins `assemble` as rank/select-bound. The proven lever
+  (on this hardware) is the *memory access pattern* — batch + sort + software-prefetch the scattered queries:
+  **3.07×** on sorted-batch select, now being wired into the assembler (`select_batch` 2.88×, `UniqueNextEdgeBatch`
+  2.15×), each change gated **bit-identical** against a baseline. The kernel, layout, and NEON-popcount levers
+  were tried and **disproven by measurement**.
 
-Design notes and research live in [`docs/`](docs/) — start with [`docs/README.md`](docs/README.md).
+The evidence lives in [`experiments/`](experiments/) (one falsifiable hypothesis per dir) and
+[`profiling-history/`](profiling-history/); design notes and research are in [`docs/`](docs/) — start with
+[`docs/README.md`](docs/README.md).
 
 > The legacy Python driver (`src/megahit`) uses a Linux-only call (`os.sched_getaffinity`) and currently
 > crashes on macOS before assembly. The C++ `megahit_core` binary itself builds and runs. Retiring the driver

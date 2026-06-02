@@ -111,6 +111,32 @@ Key facts the skill encodes (macOS / Apple Silicon):
 - **Single-threaded only for now**: the parallel CX1 sort path has a deterministic data-corruption bug on
   arm64 (`-t > 1` → `assert edge_writer.h:72` / SIGSEGV). Single-thread is clean.
 
+## Performance experiments & the batched rank/select rewrite
+
+Optimization work is **hypothesis-driven** and lives in [`experiments/`](experiments/) — each `h*/` subdir is
+one falsifiable hypothesis with a runnable kernel, evidence, and a PROVEN/DISPROVEN verdict (index:
+[`experiments/README.md`](experiments/README.md)). Use the **`performance-engineering`** skill to design/run
+new ones. The decisive, partly counter-consensus finding: on this hardware the **memory access pattern** is
+the only proven lever — *batch + sort + software-prefetch* the scattered rank/select queries. The kernel
+(branchless/table select, H1/H2), the bit-vector layout (interleaved/poppy, H5), and NEON bulk popcount (H6)
+were all **measured and disproven**. Proven: sorted-batch select **3.07×** (H3), prefetch-ahead **~1.5×** (H4).
+
+These are being wired into the assembler (the SdBG hot path `assemble` walks is rank/select-bound):
+- **`src/kmlib/kmrns.h`** (`RankAndSelect`) — batched API: `rank_batch`/`select_batch` (LSD-radix-sort the
+  queries so they hit memory in order, then scan), `select_batch_multi` (per-query symbol), and
+  allocation-free `*_batch_prefetch` variants (`__builtin_prefetch` ~16 ahead). `select_batch` → **2.88×** (H10).
+- **`src/sdbg/sdbg.h`** — graph-navigation batches on top: `ForwardBatch`/`UniqueNextEdgeBatch` (the *outgoing*
+  half of `NextSimplePathEdge`, **2.15×**, H11/H12) and `BackwardBatch`/`UniquePrevEdgeBatch` (the *incoming*
+  half, 1.24×, H13). Each composite is a **behavior-preserving extraction** (e.g. `ComputeOutgoings` →
+  `ComputeOutgoingsFrom(Forward(e))`) so the batched and scalar scans share the *identical* scan and can't diverge.
+
+**Correctness gate — run after ANY `src/sdbg/sdbg.h` change:** [`experiments/verify-contigs.sh`](experiments/verify-contigs.sh)
+rebuilds `megahit_core`, runs the 500K pipeline `-t 1`, and asserts `final.contigs.fa` md5 == the committed
+baseline. Every extraction must be **bit-identical** (8481 contigs / 5,702,702 bp / N50 703 on SRR341725
+×500K); revert anything that isn't. Integration benches that load a real graph build with
+[`experiments/build-sdbg.sh`](experiments/build-sdbg.sh) (links the SDBG TUs at `-std=c++17` — parallel_hashmap
+needs `std::result_of`); standalone kernels use `experiments/build.sh` (Homebrew clang 21).
+
 ## macOS / Apple Silicon build & known issues
 
 This fork targets macOS / Apple Silicon (see `README.md` for the build recipe; the OpenMP/libomp flags are
@@ -132,5 +158,9 @@ Planned: drop the Python driver for a **C++23-only** build, replace **OpenMP wit
 
 Project skills in `.claude/skills/`:
 - **`megahit-profiling`** — run + record a profiling pass (see Profiling above).
+- **`performance-engineering`** — design and run a hypothesis-driven optimization experiment under
+  `experiments/`: form a falsifiable hypothesis, build a kernel, measure (IPC / ns-op / cache / hotspots),
+  prove or disprove the lever, then record it (see Performance experiments above). Use when optimizing any
+  C/C++ hot path or deciding whether a rewrite is justified.
 - **`skill-writer`** — author new Agent Skills (frontmatter, structure, validation). Use it when creating
   more project skills. (Newly added skills load on Claude Code restart.)
