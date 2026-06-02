@@ -50,11 +50,27 @@ should batch the `NextSimplePathEdge==kNullID` filter (this primitive) but not e
 filter alone. The walk that follows (`PrevSimplePathEdge` chains, rc extension) is a sequential dependent
 chain and is **not** batchable.
 
+## Update — the restructure landed and is verified equivalent (2026-06-02)
+
+`unitig_graph.cpp`'s first sweep now precomputes the path-end filter with `NextSimplePathEdgeBatch` (windowed,
+read-only) into an `is_path_end` bitvector, and the walk loop's gate became `is_path_end.at(e) && try_lock(e)`.
+Everything from `bool will_be_added` onward is byte-identical. Confirmed behavior-preserving **two independent
+ways**:
+
+1. **Runtime ground-truth** — full 500K pipeline `-t 1`, `final.contigs.fa` md5 **IDENTICAL** to baseline
+   (`bf2c562…`, 8481 contigs / 5,702,702 bp / N50 703).
+2. **Adversarial static review** (5-lens workflow + synthesis) — **all EQUIVALENT, 0 divergences**. The
+   skeptic lens wrote a whole-graph empirical diff of the path-end bit for **every edge on three real SdBGs
+   (k21 30.7 M / k29 / k59), DIFFS=0** — which **closed the `e==0` coverage gap** this microbench had (on
+   k29/k59 edge 1's `UniqueNextEdge==0`, so edge 0 *is* gathered as a successor and `Backward(0)` actually
+   runs; scalar and batch compute the identical value). Verdict scope: `-t 1` only (the only supported mode).
+
+Caveat recorded: the h14 microbench draws ids in `[1, N-1]`, so it never exercised `e==0` directly; the
+adversary's triple-k whole-graph diff is what actually covers it.
+
 ## Next
 
-Restructure the `unitig_graph.cpp` first sweep to a **windowed collect → `NextSimplePathEdgeBatch` →
-classify → walk** loop, gated **bit-identical** by [`../verify-contigs.sh`](../verify-contigs.sh)
-(baseline `md5 bf2c562…`; current gate result: [`../verify-contigs.last.txt`](../verify-contigs.last.txt)).
-Then re-profile `assemble` end-to-end for the real delta — the microbenchmark's ~1.25× is the *ceiling* for
-the filter portion of the sweep, not the whole sweep (which also does locking, the unbatchable walk, and rc
-extension).
+Re-profile `assemble` for the end-to-end delta. Expect it to be **small** — the ~1.25× is the ceiling for the
+*filter* portion of the first sweep only; the sweep also does locking + the unbatchable `PrevSimplePathEdge`
+walk + rc extension, and `assemble` also does tip/bubble/low-depth removal. Measure honestly (isolated stage,
+hyperfine, reps) rather than assume the microbench number propagates.

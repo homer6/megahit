@@ -216,10 +216,17 @@ batched rank/select is real, correct API on the actual SDBG — proven on real d
   half (`UniquePrevEdge` 1.24×) and thus the composite (`NextSimplePathEdge` ~1.25×) are limited because
   `Backward` is a smaller fraction of the cost and the indegree scan is cache-local. So the filter portion of
   the sweep has a **~1.25× ceiling**, not 2×+.
-- **Remaining — the end-to-end `assemble` speedup.** Restructure `unitig_graph.cpp`'s first sweep into
-  **windowed collect-frontier → `NextSimplePathEdgeBatch` → classify → walk**. Only the `==kNullID` *filter*
-  is batchable; the path-walk (`PrevSimplePathEdge` chains) and rc-extension are sequential dependent chains.
-  Gate **bit-identical** via [`../experiments/verify-contigs.sh`](../experiments/verify-contigs.sh) at each
-  step (wrong here = silently bad assemblies), then re-profile `assemble` for the real delta.
+- **Done — the first-sweep restructure (wired in).** `unitig_graph.cpp`'s first sweep now precomputes the
+  path-end filter with `NextSimplePathEdgeBatch` (windowed, read-only) into an `is_path_end` bitvector; the
+  walk gate is `is_path_end.at(e) && try_lock(e)`, everything else byte-identical. Confirmed behavior-preserving
+  **two independent ways**: full-pipeline contigs **bit-identical** (`md5 bf2c562…`,
+  [`../experiments/verify-contigs.sh`](../experiments/verify-contigs.sh)) **and** a 5-lens adversarial static
+  review (all EQUIVALENT, 0 divergences) whose skeptic diffed the path-end bit for *every* edge on three real
+  SdBGs (k21/k29/k59), **DIFFS=0** — closing the `e==0` coverage gap. Only the `==kNullID` *filter* is
+  batchable; the path-walk (`PrevSimplePathEdge` chains) + rc-extension stay sequential.
+- **Remaining — measure the end-to-end `assemble` delta** (honestly: isolated stage, hyperfine, reps). The
+  filter is a small fraction of the sweep, which is a fraction of `assemble`, so expect a small whole-stage
+  number — the ~1.25× is the *filter* ceiling, not the stage's. Restoring **multithreading** (#2/#3, blocked
+  by the CX1 arm64 bug) remains the macro lever.
 
 Two honest caveats surfaced and are recorded: SDBG-dependent code is pinned to C++17 (vendored parallel_hashmap uses std::result_of, removed in C++20), and Forward's inline rank/GetW cap the batched win at 1.88× (not the select-only 2.88×).
