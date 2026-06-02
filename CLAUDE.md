@@ -28,6 +28,14 @@ sets, plus the driver:
 Useful CMake options (`-D<OPT>=ON`): `STATIC_BUILD`, `SANITIZER` (ASan/LSan/UBSan), `TSAN` (thread sanitizer),
 `COVERAGE`. Debug builds use `-DCMAKE_BUILD_TYPE=Debug` (adds `_GLIBCXX_DEBUG`).
 
+**C++23 (this fork).** `CMAKE_CXX_STANDARD 23` — AppleClang emits `-std=gnu++2b` (it rejects literal `c++23`),
+which *is* C++23 mode. Getting there required patching the vendored deps for removed/changed features (search
+`[megahit C++23 patch]`): `parallel_hashmap` (`std::result_of`→`std::invoke_result`; `<cstdlib>` for
+`std::abort`), `idba/hash.h` (dropped removed `std::unary_function`), `sorting/kmer_counter.cpp`
+(`std::memory_order::memory_order_*`→namespace-scope constants). Verified bit-identical after the bump.
+**Use AppleClang + system libc++, not Homebrew clang** — Homebrew's Boost libs and `megahit_core` are all
+built against the system libc++ ABI; mixing toolchains breaks linking (see `docs/boost-cobalt-macos-build.md`).
+
 ## Test
 
 ```sh
@@ -42,7 +50,7 @@ copy one of the `COMMAND` lines from the `simple_test` target in `CMakeLists.txt
 
 ## Code style
 
-clang-format, Google style, C++11 (see `.clang-format`). Format with:
+clang-format, Google style (see `.clang-format`); the language standard is now **C++23** (see Build). Format with:
 `find src -iname '*.cpp' -o -iname '*.h' | xargs clang-format -i --style=file`.
 
 ## Architecture
@@ -109,7 +117,10 @@ Key facts the skill encodes (macOS / Apple Silicon):
   dominate results. The committed baseline (`profiling-history/2026-06-01T221830-baseline-single-thread/`) is
   Release `-O3`, *untuned* (no `-mcpu`/`-march`), `gnu++11`.
 - **Single-threaded only for now**: the parallel CX1 sort path has a deterministic data-corruption bug on
-  arm64 (`-t > 1` → `assert edge_writer.h:72` / SIGSEGV). Single-thread is clean.
+  arm64 (`-t > 1` → `assert edge_writer.h:72` / SIGSEGV). **Root-caused**: a TOCTOU race in
+  `sorting/base_engine.cpp` `Lv2Sort` (offset state `acc`/`seen`/`thread_offset[tid]` read outside the lock at
+  ~344-350) + a non-atomic RMW in `sdbg/sdbg_writer.cpp` `SaveSnapshot`. Fix-by-construction (hoist offsets to
+  immutable values, single-owner shards) designed in `docs/coroutine-parallelism-architecture.md`. Single-thread is clean.
 
 ## Performance experiments & the batched rank/select rewrite
 
@@ -145,14 +156,27 @@ required because the upstream CMakeLists never links libomp). Notes:
   dispatch selects `megahit_core_no_hw_accel`.
 - The `src/megahit` Python driver needed a macOS fix (`os.sched_getaffinity` → `_available_cpus()`); it is
   slated for removal in the planned C++23 rewrite.
-- **Known bug:** multithreaded CX1 sort corruption on arm64 (above) — gates parallel runs until fixed.
+- **Known bug:** multithreaded CX1 sort corruption on arm64 (above) — **root-caused**; gates parallel runs
+  until the coroutine/thread-pool rewrite lands the fix-by-construction (see Modernization below).
 
 ## Modernization direction & docs
 
-Planned: drop the Python driver for a **C++23-only** build, replace **OpenMP with Boost.Cobalt coroutines**
-(single-process orchestration; vendored as the `modules/cobalt` submodule — see
-`docs/boost-cobalt-macos-build.md`), and evaluate SIMD / MLX for hot paths. Research and build notes live in
-[`docs/`](docs/) (start with `docs/README.md`).
+The fork now builds at **C++23** (see Build). The next arc — designed in
+**`docs/coroutine-parallelism-architecture.md`** — replaces **OpenMP + the Python driver** with a single-process
+**Boost.Cobalt coroutine** spine driving three parallelism substrates: `asio::thread_pool` (multicore), NEON
+(targeted kernels), and MLX (batched/fused GPU work). Coroutines are the *async orchestration* layer (the
+overlap/pipelining fork-join can't express, plus killing the driver's fork/exec + disk round-trips) — the
+compute lives in the substrates. Cobalt is vendored as the `modules/cobalt` submodule and is **proven
+building/running** on Apple Silicon (`src/driver/cobalt_smoke.cpp` + `src/driver/build-cobalt-smoke.sh`; build
+details + the toolchain caveat in `docs/boost-cobalt-macos-build.md`). **Biggest win = restoring multicore**
+(~86% of runtime is pinned to one core by the CX1 bug, which the rewrite fixes by construction). Research notes
+live in [`docs/`](docs/) (start with `docs/README.md`).
+
+**Honest constraints (from measured experiments — see `experiments/`):** the only proven `assemble` lever is the
+**batched memory access pattern** (sort+prefetch scattered rank/select; first-sweep shipped at 1.05×, batching
+the rest *regressed* and was reverted). SIMD is a scalpel (k-mer packing/hashing; NEON popcount / branchless-select
+/ interleaved-layout are *disproven*). MLX is throughput-only and stays **off** the latency-bound rank/select
+traversal. Don't relitigate these without new measurement.
 
 ## Skills
 
