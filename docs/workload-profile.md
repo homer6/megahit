@@ -185,3 +185,29 @@ graph-cleaning passes (`assemble` runs 5 cleaning rounds by default).
 - **`phmap` arm64 probing** — NEON group probe vs scalar fallback.
 - Re-profile on a **modern 150 bp sample** (larger usable k, shifts the stage balance) and at **full scale**
   (non-subsampled), where the radix sort's share grows.
+
+
+
+
+## Notes
+
+Integration foundation is built, validated, and safe in the real codebase:
+
+┌──────────────────────────────────────────────┬─────────────────────────────────────┬─────────────────────────┐
+│         Primitive (in real headers)          │               speedup               │       validation        │
+├──────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────┤
+│ RankAndSelect::select_batch (radix)          │                               2.88× │ correctness-gated (h10) │
+├──────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────┤
+│ RankAndSelect::rank_batch_prefetch           │                               1.52× │ zero-alloc (h9)         │
+├──────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────┤
+│ SDBG::ForwardBatch (batched core navigation) │ 1.88× on the real 30.7 M-edge graph │ == Forward, PASS (h11)  │
+└──────────────────────────────────────────────┴─────────────────────────────────────┴─────────────────────────┘
+
+megahit_core rebuilds clean with all of it. So the batched rank/select is now real, correct API on the actual SDBG — proven on real data, not just a microbenchmark.
+
+Where this leaves the rewrite
+
+- Done: the proven levers are realized as correctness-gated API in kmrns.h + sdbg.h, and ForwardBatch demonstrably wins 1.88× on a real graph. That's the hard primitive work.
+- Remaining (the end-to-end assemble speedup): wire ForwardBatch into unitig_graph.cpp's first sweep. That loop is a fused NextSimplePathEdge-filter + path-walk + EdgeReverseComplement, so it must be restructured into collect-frontier → ForwardBatch → process phases — and validated bit-identical via megahit --test at each step (wrong here = silently bad assemblies). That's the careful, correctness-critical part of #4; I've been doing it incrementally rather than risk a big-bang rewrite.
+
+Two honest caveats surfaced and are recorded: SDBG-dependent code is pinned to C++17 (vendored parallel_hashmap uses std::result_of, removed in C++20), and Forward's inline rank/GetW cap the batched win at 1.88× (not the select-only 2.88×).
