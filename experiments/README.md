@@ -31,7 +31,7 @@ byte-table, shift-free) — `verify_select_kernels()`, and `build_random_bitvect
 
 Build (from an experiment dir): `../build.sh` → links Google Benchmark with **clang 21**. Run on a quiet machine with `--benchmark_repetitions=N` for mean/stddev.
 
-**Integration experiments** (H11–H13, which link the real `SDBG`) use two committed helpers instead of
+**Integration experiments** (H11–H14, which link the real `SDBG`) use two committed helpers instead of
 `build.sh` — never hand-roll these into `/tmp`:
 - [`build-sdbg.sh`](build-sdbg.sh) — builds a bench that links `SDBG` at **`-std=c++17`** (parallel_hashmap
   needs `std::result_of`) + the two SDBG TUs. Run `../build-sdbg.sh` from the experiment dir.
@@ -58,6 +58,7 @@ Build (from an experiment dir): `../build.sh` → links Google Benchmark with **
 | **H11** | `SDBG::ForwardBatch` (batch the scattered `select` in graph navigation) wins on the real graph. | integration · [#4] | **PROVEN — 1.88×** on the real 30.7 M-edge SdBG (correctness-gated; `megahit_core` rebuilds clean). The integration foundation. See [`h11-sdbg-forward-batch/`](h11-sdbg-forward-batch/README.md). |
 | **H12** | `SDBG::UniqueNextEdgeBatch` — the outgoing half of the `NextSimplePathEdge` filter, batched. | integration · [#4] | **PROVEN — 2.15×** on the real graph, `== scalar` (PASS); via behavior-preserving `ComputeOutgoingsFrom` extraction. See [`h12-unique-next-batch/`](h12-unique-next-batch/README.md). |
 | **H13** | `SDBG::UniquePrevEdgeBatch` — the incoming half, batched (needs **per-query-symbol** `select_batch_multi`). | integration · [#4] | **PROVEN — 1.24×** on the real graph, `== scalar` (PASS); behavior-preserving `ComputeIncomingsFrom` extraction. *Smaller* win than the outgoing half — `Backward` is one scattered `select` and a smaller fraction of the cost; the indegree scan is cache-local. **The outgoing half is where batching pays.** See [`h13-unique-prev-batch/`](h13-unique-prev-batch/README.md). |
+| **H14** | `SDBG::NextSimplePathEdgeBatch` — the composite the `assemble` first sweep filters on (`==kNullID` per edge). Two-phase (dependent) batch. | integration · [#4] | **PROVEN — ~1.25×** on the real graph, `== scalar` (PASS); composed from H12+H13, equal-by-construction. Lands between the two halves and close to H13 (every edge pays full `UniqueNextEdge`, survivors then pay `UniquePrevEdge` + gather/scatter). The filter is the batchable part of the sweep; the walk that follows is an unbatchable dependent chain. See [`h14-next-simple-path-batch/`](h14-next-simple-path-batch/README.md). |
 
 > **Toolchain:** experiments build with **Homebrew clang 21** via [`build.sh`](build.sh) (AppleClang 15 ≈ LLVM 16 is too old; clang 21 confirmed to not change any conclusion, only ~3% absolute). The repo's `megahit_core` still builds with AppleClang for now.
 

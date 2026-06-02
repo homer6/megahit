@@ -41,6 +41,7 @@ measurement wins.**
 | **sorted-batch select** | **PROVEN — 3.07×** | compiler-independent (cache locality + HW prefetch); **the rewrite-justifying lever** (`h3-sorted-batch`) |
 | **prefetch-ahead** | **PROVEN — ~1.5×** | `__builtin_prefetch` P≈16 ahead on an unsorted batch captures ~76% of the sorted ceiling — latency-hiding, *no sort needed* (`h4-prefetch-ahead`) |
 | **batched API** (in `kmlib::RankAndSelect`) | **DELIVERED** | `rank_batch_prefetch` **1.52×** (zero-allocation); `select_batch` with an **LSD radix sort** **2.88×** (near the 3.07× ceiling; `std::sort` only managed 1.34× — the sort *algorithm* is the cost, not allocation, and `std::inplace_vector` isn't in libc++ yet though C++26 compiles). `megahit_core` rebuilds clean (`h8`/`h9`/`h10`) |
+| **SdBG graph-nav batches** (in `sdbg.h`, on top of the API) | **PROVEN — 1.24–2.15×** | on the real 30.7 M-edge graph, each `== scalar` (PASS), built by **behavior-preserving extraction**: `ForwardBatch` **1.88×** (h11), `UniqueNextEdgeBatch` **2.15×** (h12, the *outgoing* filter half), `UniquePrevEdgeBatch` **1.24×** (h13, *incoming* half — `Backward` is a smaller fraction of the cost), `NextSimplePathEdgeBatch` **~1.25×** (h14, the composite the first sweep filters on). **The outgoing half is where batching pays;** the win is the ceiling for the *filter*, not the whole sweep (whose walk + rc-extension are unbatchable dependent chains) |
 | interleaved 128 B (rank9) layout | **DISPROVEN** (rank, 512 Mbit) | ≈/slightly slower — `l1_occ_`(1 MB)+`l2_occ_`(64 KB) already fit L2, so rank is already ~1 DRAM miss; nothing to coalesce (`h5-interleaved-layout`). Caveat: W-array / select / multi-Gbit untested |
 | NEON bulk popcount (build) | **DISPROVEN** | bulk popcount is bandwidth-bound (63 GiB/s single-core ceiling); hand-NEON *slower* than scalar — lever is multicore, not SIMD (`h6-neon-popcount`) |
 | toolchain (`-mcpu=native`, clang 21) | ~null | clang 21 ≈ +3% vs AppleClang 15; conclusions unchanged (`h7`) |
@@ -193,21 +194,32 @@ graph-cleaning passes (`assemble` runs 5 cleaning rounds by default).
 
 Integration foundation is built, validated, and safe in the real codebase:
 
-┌──────────────────────────────────────────────┬─────────────────────────────────────┬─────────────────────────┐
-│         Primitive (in real headers)          │               speedup               │       validation        │
-├──────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────┤
-│ RankAndSelect::select_batch (radix)          │                               2.88× │ correctness-gated (h10) │
-├──────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────┤
-│ RankAndSelect::rank_batch_prefetch           │                               1.52× │ zero-alloc (h9)         │
-├──────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────┤
-│ SDBG::ForwardBatch (batched core navigation) │ 1.88× on the real 30.7 M-edge graph │ == Forward, PASS (h11)  │
-└──────────────────────────────────────────────┴─────────────────────────────────────┴─────────────────────────┘
+| Primitive (in real headers, measured on the real 30.7 M-edge k21 graph) | speedup | validation |
+|---|---:|---|
+| `RankAndSelect::select_batch` (radix) | 2.88× | correctness-gated (h10) |
+| `RankAndSelect::rank_batch_prefetch` | 1.52× | zero-alloc (h9) |
+| `SDBG::ForwardBatch` (batched core navigation) | 1.88× | `== scalar`, PASS (h11) |
+| `SDBG::UniqueNextEdgeBatch` (outgoing filter half) | 2.15× | `== scalar`, PASS (h12) |
+| `SDBG::UniquePrevEdgeBatch` (incoming half) | 1.24× | `== scalar`, PASS (h13) |
+| `SDBG::NextSimplePathEdgeBatch` (the sweep's per-edge filter) | ~1.25× | `== scalar`, PASS (h14) |
 
-megahit_core rebuilds clean with all of it. So the batched rank/select is now real, correct API on the actual SDBG — proven on real data, not just a microbenchmark.
+`megahit_core` rebuilds clean with all of it, and the full 500K pipeline produces **bit-identical** contigs
+(`md5 bf2c562…`, 8481 contigs / 5,702,702 bp / N50 703) after each behavior-preserving extraction. So the
+batched rank/select is real, correct API on the actual SDBG — proven on real data, not just a microbenchmark.
 
-Where this leaves the rewrite
+### Where this leaves the rewrite
 
-- Done: the proven levers are realized as correctness-gated API in kmrns.h + sdbg.h, and ForwardBatch demonstrably wins 1.88× on a real graph. That's the hard primitive work.
-- Remaining (the end-to-end assemble speedup): wire ForwardBatch into unitig_graph.cpp's first sweep. That loop is a fused NextSimplePathEdge-filter + path-walk + EdgeReverseComplement, so it must be restructured into collect-frontier → ForwardBatch → process phases — and validated bit-identical via megahit --test at each step (wrong here = silently bad assemblies). That's the careful, correctness-critical part of #4; I've been doing it incrementally rather than risk a big-bang rewrite.
+- **Done — the primitives.** The proven levers are realized as correctness-gated API in `kmrns.h` + `sdbg.h`,
+  and the whole composite the first sweep filters on (`NextSimplePathEdge`) is batched and validated `== scalar`
+  (h11→h14). That's the hard primitive work, done incrementally so each step is bit-identical.
+- **Learned — where the win is.** The *outgoing* half batches best (`UniqueNextEdge` 2.15×); the *incoming*
+  half (`UniquePrevEdge` 1.24×) and thus the composite (`NextSimplePathEdge` ~1.25×) are limited because
+  `Backward` is a smaller fraction of the cost and the indegree scan is cache-local. So the filter portion of
+  the sweep has a **~1.25× ceiling**, not 2×+.
+- **Remaining — the end-to-end `assemble` speedup.** Restructure `unitig_graph.cpp`'s first sweep into
+  **windowed collect-frontier → `NextSimplePathEdgeBatch` → classify → walk**. Only the `==kNullID` *filter*
+  is batchable; the path-walk (`PrevSimplePathEdge` chains) and rc-extension are sequential dependent chains.
+  Gate **bit-identical** via [`../experiments/verify-contigs.sh`](../experiments/verify-contigs.sh) at each
+  step (wrong here = silently bad assemblies), then re-profile `assemble` for the real delta.
 
 Two honest caveats surfaced and are recorded: SDBG-dependent code is pinned to C++17 (vendored parallel_hashmap uses std::result_of, removed in C++20), and Forward's inline rank/GetW cap the batched win at 1.88× (not the select-only 2.88×).
