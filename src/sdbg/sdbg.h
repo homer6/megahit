@@ -155,6 +155,35 @@ class SDBG {
     }
   }
 
+  // out[i] = Backward(edge_ids[i]). Batches the scattered rs_w_.select (per-query symbol) via
+  // select_batch_multi; the per-query LastCharOf/rank prep is cache-resident.
+  void BackwardBatch(const uint64_t *edge_ids, int64_t *out, size_t n) const {
+    std::vector<uint8_t> cs(n);
+    std::vector<int64_t> ks(n);
+    for (size_t i = 0; i < n; ++i) {
+      uint8_t a = LastCharOf(edge_ids[i]);
+      cs[i] = a;
+      ks[i] = rs_last_.rank(edge_ids[i] - 1) - rank_f_[a];
+    }
+    rs_w_.select_batch_multi(cs.data(), ks.data(), out, n);
+  }
+
+  // Batched UniquePrevEdge: out[i] = UniquePrevEdge(edge_ids[i]) (== kNullID if not unique/invalid).
+  // BackwardBatch + the *identical* scalar ComputeIncomingsFrom scan. The incoming half of the batched
+  // NextSimplePathEdge filter (#4).
+  void UniquePrevEdgeBatch(const uint64_t *edge_ids, uint64_t *out, size_t n) const {
+    std::vector<int64_t> bwd(n);
+    BackwardBatch(edge_ids, bwd.data(), n);
+    for (size_t i = 0; i < n; ++i) {
+      if (!IsValidEdge(edge_ids[i])) { out[i] = kNullID; continue; }
+      uint64_t ret = 0;
+      out[i] = (ComputeIncomingsFrom<kFlagWriteOut | kFlagMustEq1>(
+                    static_cast<uint64_t>(bwd[i]), &ret) == 1)
+                   ? ret
+                   : kNullID;
+    }
+  }
+
  private:
   const label_word_t *TipLabelStartPtr(uint64_t edge_id) const {
     return content_.tip_lables.data() +
@@ -283,7 +312,14 @@ class SDBG {
       return -1;
     }
 
-    uint64_t first_income = Backward(edge_id);
+    return ComputeIncomingsFrom<flag>(Backward(edge_id), incomings);
+  }
+
+  // The incoming-degree scan starting from `first_income` = Backward(edge_id). Extracted from
+  // ComputeIncomings so batched callers (BackwardBatch) can supply a pre-resolved Backward and reuse this
+  // *identical* scan. Behavior-preserving (validate via `megahit --test`).
+  template <uint8_t flag = 0>
+  int ComputeIncomingsFrom(uint64_t first_income, uint64_t *incomings) const {
     uint8_t c = GetW(first_income);
     unsigned count_ones = IsLastOrTip(first_income);
     int indegree = IsValidEdge(first_income);

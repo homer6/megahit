@@ -272,6 +272,21 @@ class RankAndSelect {
     for (size_t i = 0; i < n; ++i) out[kv[i].second] = InternalRank(c, kv[i].first);
   }
 
+  // Per-query symbol: out[i] = select(cs[i], ks[i]). For multi-symbol structures (the W array) where the
+  // symbol varies per query. Sorts by a (symbol,rank) composite so each symbol's queries resolve in rank
+  // order (locality within the symbol's region). Requires ranks < 2^48 (true for any realistic genome).
+  void select_batch_multi(const uint8_t *cs, const size_type *ks, size_type *out, size_t n,
+                          std::vector<BatchPair> *scratch = nullptr) const {
+    std::vector<BatchPair> local;
+    std::vector<BatchPair> &kv = scratch ? *scratch : local;
+    kv.resize(n);
+    const size_type kMask = (size_type(1) << 48) - 1;
+    for (size_t i = 0; i < n; ++i)
+      kv[i] = {(static_cast<size_type>(cs[i]) << 48) | (ks[i] & kMask), static_cast<uint32_t>(i)};
+    radix_sort_pairs(kv);
+    for (size_t i = 0; i < n; ++i) { uint32_t j = kv[i].second; out[j] = InternalSelect(cs[j], ks[j]); }
+  }
+
   // Allocation-free, order-preserving alternative to the sorted batch: software-prefetch the first
   // index line P queries ahead (experiments/h4: ~1.5x for rank; no sort, no buffer). Preferred for
   // bounded/streaming batches where a per-batch sort or heap allocation isn't worth it.
