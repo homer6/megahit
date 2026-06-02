@@ -157,20 +157,29 @@ required because the upstream CMakeLists never links libomp). Notes:
 - The `src/megahit` Python driver needed a macOS fix (`os.sched_getaffinity` → `_available_cpus()`); it is
   slated for removal in the planned C++23 rewrite.
 - **Known bug:** multithreaded CX1 sort corruption on arm64 (above) — **root-caused**; gates parallel runs
-  until the coroutine/thread-pool rewrite lands the fix-by-construction (see Modernization below).
+  until the rewrite lands the fix-by-construction (shared-nothing sharding removes the shared-state bug class;
+  see Modernization below).
 
 ## Modernization direction & docs
 
-The fork now builds at **C++23** (see Build). The next arc — designed in
-**`docs/coroutine-parallelism-architecture.md`** — replaces **OpenMP + the Python driver** with a single-process
-**Boost.Cobalt coroutine** spine driving three parallelism substrates: `asio::thread_pool` (multicore), NEON
-(targeted kernels), and MLX (batched/fused GPU work). Coroutines are the *async orchestration* layer (the
-overlap/pipelining fork-join can't express, plus killing the driver's fork/exec + disk round-trips) — the
-compute lives in the substrates. Cobalt is vendored as the `modules/cobalt` submodule and is **proven
-building/running** on Apple Silicon (`src/driver/cobalt_smoke.cpp` + `src/driver/build-cobalt-smoke.sh`; build
-details + the toolchain caveat in `docs/boost-cobalt-macos-build.md`). **Biggest win = restoring multicore**
-(~86% of runtime is pinned to one core by the CX1 bug, which the rewrite fixes by construction). Research notes
-live in [`docs/`](docs/) (start with `docs/README.md`).
+The fork now builds at **C++23** (see Build). **Direction (current): convert to a [Seastar](https://github.com/scylladb/seastar)
+application** — shard-per-core, shared-nothing, **C++20-coroutine API** (`co_await`/`seastar::future<T>`, *not*
+the legacy `.then()`). Lay down a new Seastar base, then migrate the pipeline (stages → `co_await`-ed coroutines
+on a `sharded<T>` service; multicore = `invoke_on_all` across shards). Full guide:
+**[`docs/seastar-guide.md`](docs/seastar-guide.md)**. **This supersedes the earlier Boost.Cobalt + `asio::thread_pool`
+plan** (`docs/coroutine-parallelism-architecture.md` — keep its *measured findings* + the CX1 root-cause; the
+substrate is now Seastar shards). The `modules/cobalt` submodule + `src/driver/cobalt_smoke.cpp` are now legacy.
+
+> **Two load-bearing caveats before large-scale migration (see `docs/seastar-guide.md §0`):** (1) **Seastar is
+> Linux-only** — no native macOS/Apple-Silicon support (Docker/Linux container, or re-target Linux); this
+> collides with the fork's platform premise and all the M-series perf measurements. (2) Seastar's **shared-nothing
+> shard-per-core** model fights MEGAHIT's **shared-graph** algorithm — the SdBG must be partitioned so traversals
+> stay shard-local, or cross-shard `submit_to` latency hits the already-latency-bound 56% `assemble` stage.
+> Prototype a sharded SdBG + cross-shard-rate microbench before committing.
+
+**Biggest motivating win = restoring multicore** (~86% of runtime is pinned to one core by the CX1 bug; Seastar's
+shared-nothing model removes that shared-mutable-state bug class by construction). Research notes live in
+[`docs/`](docs/) (start with `docs/README.md`).
 
 **Honest constraints (from measured experiments — see `experiments/`):** the only proven `assemble` lever is the
 **batched memory access pattern** (sort+prefetch scattered rank/select; first-sweep shipped at 1.05×, batching
