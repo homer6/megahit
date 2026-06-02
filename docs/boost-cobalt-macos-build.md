@@ -21,10 +21,13 @@ Consequently `find_package(Boost COMPONENTS cobalt)` + `Boost::cobalt`, or a pla
 Vendor the Cobalt sources at the **matching tag** so they agree with the installed headers, and compile them straight into the `megahit` binary against the system Boost headers:
 
 ```sh
-git clone --depth 1 --branch boost-1.90.0 https://github.com/boostorg/cobalt.git extern/cobalt
+git submodule add https://github.com/boostorg/cobalt.git modules/cobalt
+git -C modules/cobalt checkout boost-1.90.0   # pin to the tag matching the installed Boost headers
+git add modules/cobalt .gitmodules
+# on fresh checkouts:  git submodule update --init --recursive
 ```
 
-The compiled runtime is just five files — `extern/cobalt/src/`:
+The compiled runtime is just five files — `modules/cobalt/src/`:
 
 ```
 channel.cpp   error.cpp   main.cpp   this_thread.cpp   thread.cpp
@@ -34,13 +37,13 @@ Compile these alongside our driver TUs with `-I/opt/homebrew/include` (system Bo
 
 ```sh
 clang++ -std=c++2b -stdlib=libc++ -I/opt/homebrew/include \
-  our_driver.cpp extern/cobalt/src/*.cpp \
+  our_driver.cpp modules/cobalt/src/*.cpp \
   -L/opt/homebrew/lib -lboost_container -o megahit
 ```
 
 > **TBD:** Boost's separately-compiled libraries normally want a `BOOST_COBALT_SOURCE`-style define when building their `src/*.cpp` (symbol decl/visibility). The macro wasn't where first expected (`detail/config.hpp`); confirm the exact name/location and whether it's needed for a static in-binary build when wiring the CMake target. Watch for duplicate-symbol or visibility warnings if omitted.
 
-Alternative considered: `FetchContent` of `boostorg/cobalt` at configure time (cleaner provenance, needs network at configure). Vendoring into `extern/` was chosen for a self-contained build; treat `extern/cobalt` as a pinned third-party checkout (gitignore or submodule, TBD).
+`boostorg/cobalt` is pinned as a **git submodule** at `modules/cobalt` (tag `boost-1.90.0`, recorded in `.gitmodules`), so its version tracks the installed Boost headers and fresh clones pick it up via `git submodule update --init --recursive`. (`FetchContent` was the alternative — rejected to keep the dependency explicit and offline-buildable once checked out.)
 
 ## Toolchain facts (this machine)
 
