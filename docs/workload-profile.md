@@ -39,15 +39,17 @@ measurement wins.**
 |---|---|---|
 | in-word select kernel (branchless / `consteval` table) | **DISPROVEN as stated** | only ~1.3× on *independent* queries — a hand-rolled bench's "6.8×" was an artifact — and ~1.7× **slower** on the dependent traversal chain; the table ties the branchless kernel (`h1-select-in-word`) |
 | **sorted-batch select** | **PROVEN — 3.07×** | compiler-independent (cache locality + HW prefetch); **the rewrite-justifying lever** (`h3-sorted-batch`) |
+| **prefetch-ahead** | **PROVEN — ~1.5×** | `__builtin_prefetch` P≈16 ahead on an unsorted batch captures ~76% of the sorted ceiling — latency-hiding, *no sort needed* (`h4-prefetch-ahead`) |
 | interleaved 128 B (rank9) layout | **DISPROVEN** (rank, 512 Mbit) | ≈/slightly slower — `l1_occ_`(1 MB)+`l2_occ_`(64 KB) already fit L2, so rank is already ~1 DRAM miss; nothing to coalesce (`h5-interleaved-layout`). Caveat: W-array / select / multi-Gbit untested |
+| NEON bulk popcount (build) | **DISPROVEN** | bulk popcount is bandwidth-bound (63 GiB/s single-core ceiling); hand-NEON *slower* than scalar — lever is multicore, not SIMD (`h6-neon-popcount`) |
 | toolchain (`-mcpu=native`, clang 21) | ~null | clang 21 ≈ +3% vs AppleClang 15; conclusions unchanged (`h7`) |
 
-**Bottom line for the rewrite:** the only *proven* lever is the **query access pattern** — batch the
-rank/select queries and resolve them **sorted** (3×). The bit-twiddling kernel and the bitvector layout were
-both **disproven by measurement**, despite being the most-confidently-recommended ideas. Spend the rewrite
-budget on a **batched, sorted SdBG traversal** (issue #4), which also composes with multithreading (#3) — not
-on a broadword select (#5) or an interleaved layout (#7). Pending experiments: H4 (explicit prefetch-ahead),
-H6 (NEON build popcount).
+**Bottom line for the rewrite:** the *proven* levers are all about the **memory access pattern** — **sort the
+batch** (3×) and/or **prefetch P≈16 ahead** (1.5×, no sort), which compose toward a ~1.8× ceiling and stack on
+**multicore** (#3). Every *compute*-side and *layout*-side idea was **disproven by measurement** — the
+branchless/table kernel (#5), the interleaved 128 B layout (#7), and NEON build-popcount (#6) — despite being
+the most-confidently-recommended. Spend the rewrite budget on a **batched, sorted, prefetched SdBG traversal**
+(issue #4) plus restoring **multithreading** (#2/#3); do *not* spend it on broadword select or an interleaved layout.
 
 ## Where the time goes (measured)
 

@@ -1,0 +1,6 @@
+# compiled experiment binaries / objects / traces
+bench
+bench21
+*.o
+*.dSYM/
+*.trace/
