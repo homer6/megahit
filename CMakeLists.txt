@@ -2,11 +2,11 @@ cmake_minimum_required(VERSION 3.5...4.1)
 project(megahit)
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
-if (CMAKE_VERSION VERSION_LESS "3.1")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-else ()
-    set(CMAKE_CXX_STANDARD 11)
-endif ()
+# C++23 (this fork's target; AppleClang 15 emits -std=c++2b, clang 16+/Homebrew clang emits -std=c++23).
+# Vendored deps were patched for C++23: parallel_hashmap (std::result_of -> std::invoke_result; <cstdlib> for
+# std::abort) and idba (dropped removed std::unary_function); see those files' [megahit C++23 patch] notes.
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(COVERAGE "Generate coverage report" OFF)
 option(STATIC_BUILD "Build static executation" OFF)

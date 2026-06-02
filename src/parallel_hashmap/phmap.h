@@ -36,6 +36,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>  // std::abort — not transitively provided by libc++ at C++23 [megahit C++23 patch]
 #include <cstring>
 #include <iterator>
 #include <limits>

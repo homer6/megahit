@@ -449,8 +449,19 @@ using common_type_t = typename std::common_type<T...>::type;
 template <typename T>
 using underlying_type_t = typename std::underlying_type<T>::type;
 
+// std::result_of was deprecated in C++17 and REMOVED in C++20. This fork targets C++23, so emulate it with
+// std::invoke_result (preserving the F(Args...) call syntax this alias expects). [megahit C++23 patch]
+#if __cplusplus >= 201703L
+template <typename T>
+struct phmap_result_of;
+template <typename F, typename... Args>
+struct phmap_result_of<F(Args...)> : std::invoke_result<F, Args...> {};
+template <typename T>
+using result_of_t = typename phmap_result_of<T>::type;
+#else
 template <typename T>
 using result_of_t = typename std::result_of<T>::type;
+#endif
 
 namespace type_traits_internal {
 
