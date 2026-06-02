@@ -47,6 +47,7 @@ Build (from an experiment dir): `../build.sh` → links Google Benchmark with **
 
 | **H8/H9** | The batched rank/select **API** (sorted + prefetch) realizes the levers in `RankAndSelect`. | API · [#4] | **DELIVERED** — `rank_batch_prefetch` **1.52×** (allocation-free); `select_batch` **2.88×** (radix, see H10). Sort *algorithm* is the cost, not allocation; `std::inplace_vector` not in libc++ yet (C++26 compiles). See [`h9-stack-prefetch-batch/`](h9-stack-prefetch-batch/README.md). |
 | **H10** | A radix sort recovers h3's 3× for batched select (vs `std::sort`'s overhead). | sort · [#4] | **PROVEN — 2.72×** (vs 1.34× `std::sort`); **promoted into `RankAndSelect::select_batch`**. See [`h10-radix-batch/`](h10-radix-batch/README.md). |
+| **H11** | `SDBG::ForwardBatch` (batch the scattered `select` in graph navigation) wins on the real graph. | integration · [#4] | **PROVEN — 1.88×** on the real 30.7 M-edge SdBG (correctness-gated; `megahit_core` rebuilds clean). The integration foundation. See [`h11-sdbg-forward-batch/`](h11-sdbg-forward-batch/README.md). |
 
 > **Toolchain:** experiments build with **Homebrew clang 21** via [`build.sh`](build.sh) (AppleClang 15 ≈ LLVM 16 is too old; clang 21 confirmed to not change any conclusion, only ~3% absolute). The repo's `megahit_core` still builds with AppleClang for now.
 
