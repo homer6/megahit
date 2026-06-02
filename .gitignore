@@ -38,3 +38,6 @@ clang
 sanitizer
 cov
 tsan
+
+# local runtime-profiling sample data & output
+profiling/
