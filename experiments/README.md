@@ -31,6 +31,14 @@ byte-table, shift-free) — `verify_select_kernels()`, and `build_random_bitvect
 
 Build (from an experiment dir): `../build.sh` → links Google Benchmark with **clang 21**. Run on a quiet machine with `--benchmark_repetitions=N` for mean/stddev.
 
+**Integration experiments** (H11–H13, which link the real `SDBG`) use two committed helpers instead of
+`build.sh` — never hand-roll these into `/tmp`:
+- [`build-sdbg.sh`](build-sdbg.sh) — builds a bench that links `SDBG` at **`-std=c++17`** (parallel_hashmap
+  needs `std::result_of`) + the two SDBG TUs. Run `../build-sdbg.sh` from the experiment dir.
+- [`verify-contigs.sh`](verify-contigs.sh) — the **correctness gate**: rebuilds `megahit_core`, runs the 500K
+  pipeline `-t 1`, asserts `final.contigs.fa` md5 == the committed baseline. Run after any `sdbg.h` change;
+  every batched-primitive extraction must be **bit-identical**.
+
 ## Hypotheses
 
 | ID | Hypothesis | Lever / issue | Status |
