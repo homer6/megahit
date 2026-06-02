@@ -1,4 +1,4 @@
-// MEGAHIT Seastar service — per-shard assembly engine (Phase 0 / strangler).
+// MEGAHIT Seastar service — per-shard assembly engine (Phase 0).
 //
 // The multi-k pipeline (docs/legacy-driver-spec.md §1) as `co_await`-ed coroutine stages, in one process, no
 // fork/exec, no inter-stage disk round-trips. Each stage builds the megahit_core argv per the port spec and

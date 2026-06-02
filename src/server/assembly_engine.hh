@@ -2,10 +2,10 @@
 //
 // Phase 0 of the migration (docs/megahit-as-a-service.md §1). One AssemblyEngine instance per shard
 // (`seastar::sharded<AssemblyEngine>`). It runs the legacy multi-k pipeline as `co_await`-ed stages in-process
-// — replacing the Python driver's fork/exec + disk round-trips. Each stage currently shells into the existing
-// `megahit_core` entry point (`main_*`) inside a `seastar::thread` (STRANGLER pattern); later phases replace
-// each with a native typed coroutine + sharded data. The CX1 `-t>1` corruption dissolves once the build
-// stages move to shard-owned state (docs/coroutine-parallelism-architecture.md §4).
+// — replacing the Python driver's fork/exec + disk round-trips. Each stage currently calls the existing
+// `megahit_core` entry point (`main_*`) inside a `seastar::thread`; later phases replace each with native typed
+// code over shard-owned data. The CX1 `-t>1` corruption dissolves once the build stages move to shard-owned
+// state (docs/coroutine-parallelism-architecture.md §4).
 #pragma once
 
 #include <seastar/core/future.hh>
